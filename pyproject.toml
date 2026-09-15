@@ -1,0 +1,31 @@
+[project]
+name = "gemini-player-2"
+version = "0.1.0"
+description = "Gemini: Player 2 - Real-Time Full-Duplex AI Pair Programming & Arcade Game Sandbox"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Andrew Mason" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "google-antigravity>=0.1.16",
+    "google-genai>=2.3.0",
+    "pydantic>=2.13.5",
+    "python-dotenv>=1.2.3",
+    "uvicorn[standard]>=0.53.0",
+    "websockets>=16.1.1",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+	background-color: #030712;
+	color: #f1f5f9;
+}
+
+/* Gemini Player 2 Custom Monaco Caret and Pill Tag */
+.gemini-player2-cursor-widget {
+	position: absolute;
+	pointer-events: none;
+	z-index: 50;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	transform: translate(0, -100%);
+	animation: floatSubtle 2s ease-in-out infinite alternate;
+}
+
+.gemini-caret {
+	width: 2px;
+	height: 18px;
+	background: linear-gradient(to bottom, #38bdf8, #818cf8);
+	box-shadow:
+		0 0 8px #38bdf8,
+		0 0 14px #818cf8;
+	position: absolute;
+	top: 100%;
+	left: 0;
+	border-radius: 1px;
+}
+
+.gemini-pill-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	background: linear-gradient(135deg, #0284c7 0%, #4f46e5 100%);
+	color: #f8fafc;
+	font-size: 10px;
+	font-weight: 600;
+	font-family: system-ui, -apple-system, sans-serif;
+	padding: 2px 8px;
+	border-radius: 9999px;
+	box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
+	white-space: nowrap;
+	letter-spacing: 0.02em;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.gemini-pill-tag .sparkle {
+	color: #fef08a;
+	font-size: 11px;
+}
+
+.gemini-line-highlight {
+	background: rgba(56, 189, 248, 0.08);
+	border-left: 2px solid #38bdf8;
+}
+
+@keyframes floatSubtle {
+	0% {
+		transform: translate(0, -100%) translateY(0px);
+	}
+	100% {
+		transform: translate(0, -100%) translateY(-2px);
+	}
+}
+
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.animate-fadeIn {
+	animation: fadeIn 0.2s ease-out forwards;
+}

@@ -1,0 +1,32 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Frontend / Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Editor directories
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Scaffolding & Agent Scratchpads
+.agents/
