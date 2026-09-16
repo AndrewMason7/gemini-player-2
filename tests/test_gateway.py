@@ -218,3 +218,47 @@ async def test_session_worker_concurrency_serialization():
     assert cursor_msgs[0]["gesture"] == "typing"
     assert cursor_msgs[1]["line"] == 2
     assert cursor_msgs[1]["gesture"] == "typing"
+
+
+@pytest.mark.anyio
+async def test_session_empty_edits_calls_notify_task_failed():
+    from backend.models import CodeDiffEvent
+    from backend.session import LiveSessionManager
+
+    mock_ws = AsyncMock()
+    mock_conductor = MagicMock()
+    mock_conductor.update_code = MagicMock()
+    mock_conductor.notify_task_completed = AsyncMock()
+    mock_conductor.notify_task_failed = AsyncMock()
+
+    mock_worker = MagicMock()
+    mock_worker.execute_task = AsyncMock(
+        return_value=CodeDiffEvent(
+            description="Could not parse requested change",
+            edits=[],
+        )
+    )
+
+    session = LiveSessionManager(
+        websocket=mock_ws,
+        initial_code="line 1\n",
+        worker=mock_worker,
+    )
+    session.conductor = mock_conductor
+
+    await session.on_dispatch_task("make ball transparent", "")
+    await asyncio.gather(*list(session.active_worker_tasks))
+
+    # Must NOT call notify_task_completed
+    mock_conductor.notify_task_completed.assert_not_called()
+
+    # Must call notify_task_failed with instruction and reason
+    mock_conductor.notify_task_failed.assert_called_once_with(
+        "make ball transparent", "Could not parse requested change"
+    )
+
+    # Must send StatusEvent notifying failure
+    sent_msgs = [json.loads(c[0][0]) for c in mock_ws.send_text.call_args_list]
+    status_msgs = [m for m in sent_msgs if m.get("type") == "status"]
+    assert any("Edit failed" in m.get("message", "") for m in status_msgs)
+

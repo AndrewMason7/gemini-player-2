@@ -138,8 +138,8 @@ class LiveSessionManager:
                         current_code=self.current_code,
                         on_thought=stream_thought,
                     )
-                    # Apply edits to backend code mirror immediately
                     if diff_result.edits:
+                        # Apply edits to backend code mirror immediately
                         self.current_code = apply_code_edits(
                             self.current_code, diff_result.edits
                         )
@@ -149,18 +149,34 @@ class LiveSessionManager:
                         first_line = diff_result.edits[0].start_line
                         await self.on_cursor_move(first_line, 1, "typing")
 
-                    # Push diff event to client
-                    await self.send_json_safe(diff_result.model_dump())
-                    await self.send_json_safe(
-                        StatusEvent(state="listening", message="Ready").model_dump()
-                    )
-
-                    # Closed-loop notification back to Conductor
-                    if self.conductor:
-                        edited_lines = [e.start_line for e in diff_result.edits]
-                        await self.conductor.notify_task_completed(
-                            diff_result.description, edited_lines
+                        # Push diff event to client
+                        await self.send_json_safe(diff_result.model_dump())
+                        await self.send_json_safe(
+                            StatusEvent(state="listening", message="Ready").model_dump()
                         )
+
+                        # Closed-loop notification back to Conductor
+                        if self.conductor:
+                            edited_lines = [e.start_line for e in diff_result.edits]
+                            await self.conductor.notify_task_completed(
+                                diff_result.description, edited_lines
+                            )
+                    else:
+                        failure_reason = diff_result.description or "No edits generated"
+                        logger.warning(
+                            f"Worker task produced zero edits: '{instruction}'. Reason: {failure_reason}"
+                        )
+                        await self.send_json_safe(diff_result.model_dump())
+                        await self.send_json_safe(
+                            StatusEvent(
+                                state="listening",
+                                message=f"Edit failed: {failure_reason}",
+                            ).model_dump()
+                        )
+                        if self.conductor:
+                            await self.conductor.notify_task_failed(
+                                instruction, failure_reason
+                            )
                 except asyncio.CancelledError:
                     logger.info(f"Worker task cancelled: '{instruction}'")
                     raise
@@ -172,6 +188,8 @@ class LiveSessionManager:
                             message=f"Task error: {e}",
                         ).model_dump()
                     )
+                    if self.conductor:
+                        await self.conductor.notify_task_failed(instruction, str(e))
 
         worker_task = asyncio.create_task(run_worker())
         self.active_worker_tasks.add(worker_task)

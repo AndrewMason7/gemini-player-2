@@ -41,12 +41,19 @@ app.add_middleware(
 @app.get("/api/health")
 async def health():
     """Health check endpoint providing status and configuration info."""
-    has_api_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY"))
+    has_api_key = bool(
+        os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_GENAI_USE_VERTEXAI")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+    )
     return {
         "status": "healthy",
         "service": "Gemini: Player 2 Gateway",
         "has_api_key": has_api_key,
-        "base_url": os.getenv("GEMINI_BASE_URL") or os.getenv("OPENAI_BASE_URL"),
+        "vertex": bool(
+            os.getenv("GOOGLE_GENAI_USE_VERTEXAI")
+            or os.getenv("GOOGLE_CLOUD_PROJECT")
+        ),
     }
 
 

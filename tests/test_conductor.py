@@ -114,6 +114,17 @@ async def test_conductor_send_methods():
         text="[Environment update: Antigravity worker finished applying code changes on line(s) [10, 11]: Increased paddle width]"
     )
 
+    # 5. notify_task_failed
+    mock_session.reset_mock()
+    await conductor.notify_task_failed(
+        "Double ball speed", "Syntax error in edit"
+    )
+    mock_session.send_realtime_input.assert_called_once()
+    failed_text = mock_session.send_realtime_input.call_args[1]["text"]
+    assert "FAILED to apply code changes" in failed_text
+    assert "Double ball speed" in failed_text
+    assert "Syntax error in edit" in failed_text
+
 
 @pytest.mark.anyio
 async def test_conductor_listen_loop():

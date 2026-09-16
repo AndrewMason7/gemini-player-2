@@ -18,6 +18,7 @@ Key Persona & Style:
 - Talk in normal, natural, enthusiastic conversation via real-time voice.
 - Keep spoken replies concise, natural, and punchy (1-3 sentences)—never lecture or monologue.
 - Speak naturally without canned phrases or robotic scripts.
+- Be genuine and authentic: celebrate wins together, but if something fails or breaks, acknowledge it honestly and with personality.
 
 Capabilities & Tools:
 1. `move_cursor(line, col, gesture)`: Move your collaborative Player 2 cursor to point to, highlight, or type at specific lines in the game editor to draw attention to code.
@@ -25,7 +26,8 @@ Capabilities & Tools:
 3. `dispatch_code_task(instruction, context_snippet)`: When the user asks to modify the game (physics, speed, colors, scoring, controls, visuals, new mechanics, powerups, bug fixes), invoke this tool with a clear instruction. Your background Antigravity worker will apply surgical edits to the code.
 4. `react_emotion(mood, effect)`: Trigger visual game reactions and screen effects (e.g. mood='excited', effect='confetti', mood='celebrating', effect='pulse', mood='thinking', effect='nod').
 
-When a code modification completes in the background, you will receive a realtime notification event. Acknowledge what was changed naturally as part of the live conversation."""
+When a code modification completes in the background, you will receive a realtime notification event. Acknowledge what was changed naturally as part of the live conversation.
+If a code modification fails or cannot be applied, you will receive an environment failure update. Acknowledge the failure candidly, explain what went wrong, and never pretend an edit succeeded when it failed."""
 
 
 class LiveConductor:
@@ -48,9 +50,7 @@ class LiveConductor:
         on_reaction: Callable[[str, str], Awaitable[None]] | None = None,
         on_status: Callable[[str, str | None], Awaitable[None]] | None = None,
     ):
-        self.api_key = (
-            api_key or os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
-        )
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model = model or os.getenv("GEMINI_LIVE_MODEL", "gemini-3.8-live")
         self.voice_name = voice_name or os.getenv("GEMINI_VOICE_NAME", "Puck")
         self.current_code = initial_code
@@ -159,7 +159,7 @@ class LiveConductor:
         self.is_running = True
         try:
             if not self.client:
-                self.client = genai.Client(api_key=self.api_key)
+                self.client = genai.Client(api_key=self.api_key, vertexai=False)
             config = self._build_config()
 
             if self.session_resumption_handle:
@@ -203,6 +203,27 @@ class LiveConductor:
             await self.session.send_realtime_input(text=event_text)
         except Exception as e:  # noqa: BLE001
             logger.debug(f"Error notifying Live session of completion: {e}")
+            self._pending_notifications.append(event_text)
+
+    async def notify_task_failed(self, instruction: str, reason: str):
+        """Notifies the Live Model when an Antigravity worker task fails so it speaks honestly about it."""
+        if not self.is_running:
+            return
+
+        event_text = (
+            f"[Environment update: Antigravity worker FAILED to apply code changes for '{instruction}'. "
+            f"Reason: {reason}. Speak to the user honestly: tell them you couldn't make that edit, "
+            f"explain what went wrong, and sound authentic—do not claim success.]"
+        )
+
+        if not self.session:
+            self._pending_notifications.append(event_text)
+            return
+
+        try:
+            await self.session.send_realtime_input(text=event_text)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"Error notifying Live session of failure: {e}")
             self._pending_notifications.append(event_text)
 
     async def send_audio_chunk(self, pcm_16k_data: bytes):
