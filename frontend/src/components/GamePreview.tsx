@@ -19,7 +19,10 @@ export const GamePreview: React.FC<GamePreviewProps> = ({ code }) => {
 	useEffect(() => {
 		const iframe = iframeRef.current;
 		if (!iframe) return;
+		setError(null);
 		void key; // Explicit trigger for game restart
+
+		const sanitizedCode = code.replace(/<\/script/gi, "<\\/script");
 
 		const htmlContent = `
       <!DOCTYPE html>
@@ -57,7 +60,7 @@ export const GamePreview: React.FC<GamePreviewProps> = ({ code }) => {
               window.parent.postMessage({ type: "GAME_ERROR", message: msg + " (line " + line + ")" }, "*");
             };
             try {
-              ${code}
+              ${sanitizedCode}
             } catch (err) {
               window.parent.postMessage({ type: "GAME_ERROR", message: err.message }, "*");
             }
