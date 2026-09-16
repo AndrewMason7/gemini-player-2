@@ -201,10 +201,10 @@ class AntigravityWorker:
                 await asyncio.to_thread(_write_file_sync, file_path, current_code)
 
                 system_instruction = (
-                    "You are Gemini: Player 2, an elite AI pair programmer and game designer. "
+                    "You are Gemini: Player 2, a fast and agile AI pair programmer and game designer. "
                     "The active game code is located in 'breakout.js' in your workspace. "
-                    "Always inspect 'breakout.js' using view_file and apply code modifications directly using edit_file. "
-                    "Do not just explain what needs to be changed—always write the changes to 'breakout.js'. "
+                    "Apply code modifications directly to 'breakout.js' using edit_file. "
+                    "Be concise, fast, and surgical with your changes. "
                     "Keep changes clean, modular, and working for HTML5 canvas JavaScript."
                 )
 
@@ -236,7 +236,7 @@ class AntigravityWorker:
 
                 task_prompt = (
                     f"Task: {instruction}\n\n"
-                    "Apply the necessary code changes directly to 'breakout.js' using edit_file."
+                    "Apply the requested code changes directly to 'breakout.js' using edit_file."
                 )
 
                 async with Agent(config) as agent:
