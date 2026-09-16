@@ -149,6 +149,77 @@ function initBricks() {
 }
 initBricks();
 
+// --- Game State Snapshot & Restoration ---
+function getGameState() {
+  return {
+    state: game.state,
+    score: game.score,
+    highScore: game.highScore,
+    lives: game.lives,
+    level: game.level,
+    combo: game.combo,
+    maxCombo: game.maxCombo,
+    paddle: { x: paddle.x },
+    ball: {
+      x: ball.x,
+      y: ball.y,
+      dx: ball.dx,
+      dy: ball.dy,
+      stuck: ball.stuck
+    },
+    bricks: bricks.map(col => col.map(b => ({ status: b.status })))
+  };
+}
+
+function restoreGameState(saved) {
+  if (!saved) return;
+  try {
+    if (typeof saved.score === "number") game.score = saved.score;
+    if (typeof saved.highScore === "number") game.highScore = saved.highScore;
+    if (typeof saved.lives === "number") game.lives = saved.lives;
+    if (typeof saved.level === "number") game.level = saved.level;
+    if (typeof saved.combo === "number") game.combo = saved.combo;
+    if (typeof saved.maxCombo === "number") game.maxCombo = saved.maxCombo;
+    if (saved.state && saved.state !== "gameover") game.state = saved.state;
+    if (saved.paddle && typeof saved.paddle.x === "number") paddle.x = saved.paddle.x;
+    if (saved.ball) {
+      if (typeof saved.ball.x === "number") ball.x = saved.ball.x;
+      if (typeof saved.ball.y === "number") ball.y = saved.ball.y;
+      if (typeof saved.ball.dx === "number") ball.dx = saved.ball.dx;
+      if (typeof saved.ball.dy === "number") ball.dy = saved.ball.dy;
+      if (typeof saved.ball.stuck === "boolean") ball.stuck = saved.ball.stuck;
+    }
+    if (saved.bricks && Array.isArray(saved.bricks)) {
+      for (let c = 0; c < saved.bricks.length && c < brickCols; c++) {
+        for (let r = 0; r < saved.bricks[c].length && r < brickRows; r++) {
+          if (bricks[c] && bricks[c][r] && saved.bricks[c][r]) {
+            bricks[c][r].status = saved.bricks[c][r].status;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Could not restore game state:", e);
+  }
+}
+
+if (typeof window !== "undefined" && window.__SAVED_GAME_STATE__) {
+  restoreGameState(window.__SAVED_GAME_STATE__);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("message", (e) => {
+    if (!e.data) return;
+    if (e.data.type === "TRIGGER_REACTION") {
+      // Subtle, quiet sparkle effect localized around Player 2's paddle (no audio)
+      const px = (typeof paddle !== "undefined" && paddle.x !== undefined) ? paddle.x + paddle.width / 2 : canvas.width / 2;
+      const py = (typeof paddle !== "undefined" && paddle.y !== undefined) ? paddle.y : canvas.height - 24;
+      spawnExplosion(px, py, "#38bdf8", 6);
+      spawnFloatingText("✨", px, py - 8, "#38bdf8");
+    }
+  });
+}
+
 // --- Particle System ---
 function spawnExplosion(x, y, color, count = 12) {
   for (let i = 0; i < count; i++) {
@@ -544,9 +615,19 @@ function draw() {
   ctx.restore();
 }
 
+let lastStateBroadcast = 0;
 function loop() {
   update();
   draw();
+  const now = Date.now();
+  if (now - lastStateBroadcast > 100) {
+    lastStateBroadcast = now;
+    try {
+      if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "GAME_STATE_UPDATE", state: getGameState() }, "*");
+      }
+    } catch (e) {}
+  }
   requestAnimationFrame(loop);
 }
 

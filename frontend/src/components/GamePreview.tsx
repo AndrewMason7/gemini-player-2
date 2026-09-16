@@ -4,14 +4,17 @@ import { useEffect, useRef, useState } from "react";
 
 interface GamePreviewProps {
 	code: string;
+	reaction?: { mood: string; effect: string } | null;
 }
 
-export const GamePreview: React.FC<GamePreviewProps> = ({ code }) => {
+export const GamePreview: React.FC<GamePreviewProps> = ({ code, reaction }) => {
 	const iframeRef = useRef<HTMLIFrameElement | null>(null);
 	const [key, setKey] = useState<number>(0);
 	const [error, setError] = useState<string | null>(null);
+	const lastStateRef = useRef<any>(null);
 
 	const restartGame = () => {
+		lastStateRef.current = null;
 		setKey((prev) => prev + 1);
 		setError(null);
 	};
@@ -23,6 +26,9 @@ export const GamePreview: React.FC<GamePreviewProps> = ({ code }) => {
 		void key; // Explicit trigger for game restart
 
 		const sanitizedCode = code.replace(/<\/script/gi, "<\\/script");
+		const stateInjection = lastStateRef.current
+			? `window.__SAVED_GAME_STATE__ = ${JSON.stringify(lastStateRef.current)};`
+			: "";
 
 		const htmlContent = `
       <!DOCTYPE html>
@@ -59,6 +65,7 @@ export const GamePreview: React.FC<GamePreviewProps> = ({ code }) => {
             window.onerror = function(msg, url, line) {
               window.parent.postMessage({ type: "GAME_ERROR", message: msg + " (line " + line + ")" }, "*");
             };
+            ${stateInjection}
             try {
               ${sanitizedCode}
             } catch (err) {
@@ -77,11 +84,25 @@ export const GamePreview: React.FC<GamePreviewProps> = ({ code }) => {
 			if (e.source !== iframeRef.current?.contentWindow) return;
 			if (e.data?.type === "GAME_ERROR") {
 				setError(String(e.data.message));
+			} else if (e.data?.type === "GAME_STATE_UPDATE") {
+				lastStateRef.current = e.data.state;
 			}
 		};
 		window.addEventListener("message", handleMessage);
 		return () => window.removeEventListener("message", handleMessage);
 	}, []);
+
+	useEffect(() => {
+		if (!reaction || !iframeRef.current?.contentWindow) return;
+		iframeRef.current.contentWindow.postMessage(
+			{
+				type: "TRIGGER_REACTION",
+				mood: reaction.mood,
+				effect: reaction.effect,
+			},
+			"*",
+		);
+	}, [reaction]);
 
 	return (
 		<div className="relative flex flex-col w-full h-full rounded-xl overflow-hidden border border-slate-800 bg-[#090d16] shadow-2xl">
@@ -92,8 +113,8 @@ export const GamePreview: React.FC<GamePreviewProps> = ({ code }) => {
 					<span className="font-semibold text-slate-200">
 						Interactive Canvas Sandbox
 					</span>
-					<span className="text-[10px] bg-emerald-950/80 border border-emerald-800/60 text-emerald-400 px-1.5 py-0.5 rounded font-mono">
-						HMR 12ms
+					<span className="text-[10px] bg-cyan-950/80 border border-cyan-800/60 text-cyan-300 px-1.5 py-0.5 rounded font-mono">
+						Live Sandbox
 					</span>
 				</div>
 				<div className="flex items-center gap-2">

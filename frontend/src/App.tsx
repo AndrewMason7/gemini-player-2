@@ -29,6 +29,10 @@ export function App() {
 	const [pendingEdits, setPendingEdits] = useState<DiffChunk[] | null>(null);
 	const [thoughts, setThoughts] = useState<string[]>([]);
 	const [isThinking, setIsThinking] = useState<boolean>(false);
+	const [activeReaction, setActiveReaction] = useState<{
+		mood: string;
+		effect: string;
+	} | null>(null);
 
 	const [isConnected, setIsConnected] = useState<boolean>(false);
 	const [isMicActive, setIsMicActive] = useState<boolean>(false);
@@ -246,7 +250,10 @@ export function App() {
 							break;
 
 						case "reaction":
-							// Reaction acknowledged silently without random confetti
+							setActiveReaction({
+								mood: data.mood || "excited",
+								effect: data.effect || "confetti",
+							});
 							break;
 
 						case "transcript":
@@ -472,7 +479,7 @@ export function App() {
 
 				{/* Right: Live Arcade Sandbox Canvas */}
 				<div className="w-full md:w-[480px] lg:w-[540px] h-full shrink-0 min-w-0">
-					<GamePreview code={code} />
+					<GamePreview code={code} reaction={activeReaction} />
 				</div>
 			</main>
 

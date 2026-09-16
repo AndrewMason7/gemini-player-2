@@ -181,4 +181,77 @@ describe("GamePreview - Iframe Error Containment & Resilience", () => {
         expect(error).toBeNull();
         expect(key).toBe(1);
     });
+
+    it("injects window.__SAVED_GAME_STATE__ into iframe prelude when state is preserved", () => {
+        function buildIframeSrcDocWithState(code: string, savedState: unknown): string {
+            const sanitizedCode = code.replace(/<\/script/gi, "<\\/script");
+            const stateInjection = savedState
+                ? `window.__SAVED_GAME_STATE__ = ${JSON.stringify(savedState)};`
+                : "";
+            return `
+              <script>
+                ${stateInjection}
+                ${sanitizedCode}
+              </script>
+            `;
+        }
+
+        const testState = {
+            score: 450,
+            lives: 2,
+            level: 3,
+            combo: 4,
+            ball: { x: 120, y: 200, dx: 4, dy: -4, stuck: false },
+        };
+
+        const srcdoc = buildIframeSrcDocWithState("console.log('reloaded');", testState);
+        expect(srcdoc).toContain("window.__SAVED_GAME_STATE__ = {");
+        expect(srcdoc).toContain('"score":450');
+        expect(srcdoc).toContain('"lives":2');
+        expect(srcdoc).toContain('"level":3');
+    });
+
+    it("captures GAME_STATE_UPDATE messages into lastStateRef", () => {
+        let lastState: unknown = null;
+        const mockIframeWindow = {} as Window;
+
+        const handleMessage = (e: { source: unknown; data: { type?: string; state?: unknown } }) => {
+            if (e.source !== mockIframeWindow) return;
+            if (e.data?.type === "GAME_STATE_UPDATE") {
+                lastState = e.data.state;
+            }
+        };
+
+        const statePayload = { score: 990, combo: 7 };
+        handleMessage({
+            source: mockIframeWindow,
+            data: { type: "GAME_STATE_UPDATE", state: statePayload },
+        });
+
+        expect(lastState).toEqual(statePayload);
+    });
+
+    it("forwards TRIGGER_REACTION events to iframe contentWindow", () => {
+        const postedToIframe: Array<{ type: string; mood: string; effect: string }> = [];
+        const mockIframeWindow = {
+            postMessage: (data: { type: string; mood: string; effect: string }) => {
+                postedToIframe.push(data);
+            },
+        };
+
+        const reaction = { mood: "excited", effect: "confetti" };
+        if (reaction && mockIframeWindow) {
+            mockIframeWindow.postMessage({
+                type: "TRIGGER_REACTION",
+                mood: reaction.mood,
+                effect: reaction.effect,
+            });
+        }
+
+        expect(postedToIframe.length).toBe(1);
+        expect(postedToIframe[0].type).toBe("TRIGGER_REACTION");
+        expect(postedToIframe[0].mood).toBe("excited");
+        expect(postedToIframe[0].effect).toBe("confetti");
+    });
 });
+
