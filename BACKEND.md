@@ -57,7 +57,7 @@ flowchart TD
 ### How the Two SDKs Cooperate
 
 #### 1. Front-of-House: Gemini Multimodal Live API (`google-genai`)
-- **Connection**: Managed in [`LiveConductor`](backend/conductor.py#L31) via `client.aio.live.connect(model="gemini-3.8-live", config=...)`.
+- **Connection**: Managed in [`LiveConductor`](backend/conductor.py#L33) via `client.aio.live.connect(model="gemini-3.8-live", config=...)`.
 - **Audio Pipeline**: Streams raw 16kHz 16-bit linear PCM microphone audio from the browser directly to Gemini Live using `types.Blob(data=pcm_16k_data, mime_type="audio/pcm;rate=16000")`. Receives 24kHz synthesized PCM audio back and streams binary frames to the browser's Web Audio graph.
 - **Native Turn-Taking & Interruption**: Detects user speech mid-sentence via upstream VAD, immediately emitting `InterruptedEvent` to flush client audio buffers and halt model playback.
 - **Synchronous Tool Calling**: The Live Conductor exposes four synchronous tools to `gemini-3.8-live`:
@@ -67,7 +67,7 @@ flowchart TD
   - `dispatch_code_task(instruction, context_snippet)`: **The Bridge.** Instead of generating code itself, the Live model invokes this tool with a high-level instruction and immediately keeps conversing.
 
 ##### 2. Back-of-House: Google Antigravity SDK (`google-antigravity`)
-- **Worker Execution**: Managed in [`AntigravityWorker`](backend/worker.py#L125). Configured with `gemini-3.7-flash` (the default model of the Antigravity SDK) via `google.antigravity.Agent` and `LocalAgentConfig` with workspace isolation and native `BuiltinTools.VIEW_FILE` / `BuiltinTools.EDIT_FILE`.
+- **Worker Execution**: Managed in [`AntigravityWorker`](backend/worker.py#L147). Configured with `gemini-3.7-flash` (the default model of the Antigravity SDK) via `google.antigravity.Agent` and `LocalAgentConfig` with workspace isolation and native `BuiltinTools.VIEW_FILE` / `BuiltinTools.EDIT_FILE`.
 - **Thought Streaming (`response.thoughts`)**: As the Antigravity worker reasons about game physics, collisions, or graphics, raw thought tokens are intercepted in real time and pushed over the WebSocket as `ThoughtStreamEvent` payloads, illuminating the UI's ambient **Thought Aura**.
 - **Native Workspace File Operations**: Code is written to `breakout.js` in an isolated temporary workspace directory. The agent interacts with the codebase through native file tools (`view_file`, `edit_file`) rather than prompt-based line number arithmetic.
 - **Deterministic Diff Output**: Changes to `breakout.js` are converted into mathematical `DiffChunk` objects (`start_line`, `end_line`, `new_text`) via `compute_diff_chunks(old_code, new_code)` using `difflib.SequenceMatcher`, which are applied to Monaco via `executeEdits` without resetting user caret or undo stacks.
@@ -82,7 +82,7 @@ flowchart TD
        ```
      - The Live model consumes this event mid-conversation, reacts naturally, and talks enthusiastically about the newly added gameplay mechanics.
   2. **Failure Flow**:
-     - If the agent makes no changes or throws an error, `session.py` calls [`LiveConductor.notify_task_failed`](backend/conductor.py#L210).
+     - If the agent makes no changes or throws an error, `session.py` calls [`LiveConductor.notify_task_failed`](backend/conductor.py#L209).
      - The Conductor whispers an honest environmental failure event to `gemini-3.8-live`:
        ```text
        [Environment update: Antigravity worker FAILED to apply code changes for "Double ball speed". Reason: syntax error... Speak to the user honestly: tell them you couldn't make that edit, explain what went wrong, and sound authentic—do not claim success.]
@@ -111,9 +111,9 @@ backend/
 | Module | Primary Responsibility | Key Classes / Functions |
 |---|---|---|
 | [`main.py`](backend/main.py) | App configuration, CORS, REST endpoints (`/api/health`, `/api/starter-code`), static mounts, `/ws/live` delegate. | `app`, `health_check()`, `starter_code()`, `live_websocket_endpoint()` |
-| [`session.py`](backend/session.py) | Client WebSocket connection manager, message deserialization, task serialization, code mirror sync. | [`LiveSessionManager`](backend/session.py#L53), [`apply_code_edits()`](backend/session.py#L34), [`handle_live_session()`](backend/session.py#L315) |
-| [`conductor.py`](backend/conductor.py) | Native Gemini Live WebSocket management (`client.aio.live.connect`), audio streaming, tool calls, multi-turn loop. | [`LiveConductor`](backend/conductor.py#L31), `_build_tools()`, [`listen_loop()`](backend/conductor.py#L248) |
-| [`worker.py`](backend/worker.py) | Antigravity background worker, workspace sandbox management, thought streaming, deterministic diff generation. | [`AntigravityWorker`](backend/worker.py#L128), `execute_task()`, `compute_diff_chunks()` |
+| [`session.py`](backend/session.py) | Client WebSocket connection manager, message deserialization, task serialization, code mirror sync. | [`LiveSessionManager`](backend/session.py#L55), [`apply_code_edits()`](backend/session.py#L34), [`handle_live_session()`](backend/session.py#L357) |
+| [`conductor.py`](backend/conductor.py) | Native Gemini Live WebSocket management (`client.aio.live.connect`), audio streaming, tool calls, multi-turn loop. | [`LiveConductor`](backend/conductor.py#L33), `_build_tools()`, [`listen_loop()`](backend/conductor.py#L269) |
+| [`worker.py`](backend/worker.py) | Antigravity background worker, workspace sandbox management, thought streaming, deterministic diff generation. | [`AntigravityWorker`](backend/worker.py#L147), `execute_task()`, [`compute_diff_chunks()`](backend/worker.py#L17) |
 | [`models.py`](backend/models.py) | Pydantic event schemas for all bidirectional WebSocket traffic. | `DiffChunk`, `CodeDiffEvent`, `ThoughtStreamEvent`, `CursorMoveEvent`, `EmotionEvent`, `StatusEvent`, `PingEvent`, `PongEvent` |
 | [`constants.py`](backend/constants.py) | Fixed configurations: `DEFAULT_BREAKOUT_CODE`, system instructions, default voice (`Puck`), default models. | `DEFAULT_BREAKOUT_CODE`, `CONDUCTOR_SYSTEM_INSTRUCTION` |
 
@@ -144,7 +144,7 @@ backend/
 
 1. **Microphone Audio Ingestion**:
    - The frontend records 16-bit linear PCM at 16,000 Hz.
-   - Binary WebSocket frames are forwarded directly to [`LiveConductor.send_audio_chunk`](backend/conductor.py#L208).
+   - Binary WebSocket frames are forwarded directly to [`LiveConductor.send_audio_chunk`](backend/conductor.py#L229).
    - Audio is sent upstream wrapped as a `types.Blob(data=..., mime_type="audio/pcm;rate=16000")`.
 
 2. **Model Audio Playback**:
@@ -153,7 +153,7 @@ backend/
 
 3. **Barge-In Handling**:
    - When the upstream API detects user speech while the model is responding, it emits `server_content.interrupted = True`.
-   - The backend immediately dispatches an [`InterruptedEvent`](backend/models.py#L68) (`{"type": "interrupted"}`) down to the client.
+   - The backend immediately dispatches an [`InterruptedEvent`](backend/models.py#L69) (`{"type": "interrupted"}`) down to the client.
    - The client cancels all scheduled Web Audio buffer nodes, resets the playhead, and silences playback immediately.
 
 4. **Multi-Turn Continuity**:
