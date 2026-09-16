@@ -216,7 +216,7 @@ Once connected and your microphone is unmuted:
 
 ### Backend Dependencies (`pyproject.toml`)
 * **[`google-genai`](https://pypi.org/project/google-genai/)** (`>=2.3.0`): Official Google SDK managing native Gemini Multimodal Live API WebSocket connections, full-duplex PCM audio streaming, and synchronous tool dispatch.
-* **[`google-antigravity`](https://pypi.org/project/google-antigravity/)** (`>=0.1.16`): Official Google Antigravity SDK powering background agent reasoning, thought streaming (`response.thoughts`), and surgical line diff generation.
+* **[`google-antigravity`](https://pypi.org/project/google-antigravity/)** (`>=0.1.17`): Official Google Antigravity SDK powering background agent reasoning, thought streaming (`response.thoughts`), and surgical line diff generation.
 * **[`fastapi`](https://fastapi.tiangolo.com/)** (`>=0.141.1`): High-performance asynchronous ASGI web framework orchestrating the `/ws/live` gateway and REST health/starter-code endpoints.
 * **[`uvicorn[standard]`](https://www.uvicorn.org/)** (`>=0.53.0`): Lightning-fast ASGI production server with native WebSocket framing support.
 * **[`pydantic`](https://docs.pydantic.dev/)** (`>=2.13.5`): Strictly typed V2 data contracts for all bidirectional WebSocket messages and surgical diff chunks.

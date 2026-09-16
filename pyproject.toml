@@ -10,7 +10,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",
-    "google-antigravity>=0.1.16",
+    "google-antigravity>=0.1.17",
     "google-genai>=2.3.0",
     "pydantic>=2.13.5",
     "python-dotenv>=1.2.3",
@@ -29,3 +29,6 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+filterwarnings = [
+    "ignore:.*CapabilitiesConfig.compaction_threshold is deprecated.*:DeprecationWarning",
+]

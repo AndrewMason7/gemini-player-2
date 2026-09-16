@@ -3,12 +3,20 @@ import difflib
 import logging
 import os
 import tempfile
+import warnings
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from dotenv import load_dotenv
 
 from backend.models import CodeDiffEvent, DiffChunk
+
+# Filter upstream SDK 0.1.17 model_validator descriptor inspection false-positive
+warnings.filterwarnings(
+    "ignore",
+    message=".*CapabilitiesConfig.compaction_threshold is deprecated.*",
+    category=DeprecationWarning,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
