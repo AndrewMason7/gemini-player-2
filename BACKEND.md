@@ -18,40 +18,60 @@ The defining architectural thesis of **Gemini: Player 2** is solving the fundame
 
 ```mermaid
 flowchart TD
-    Client["Browser Client (React 19, Monaco, Web Audio)"]
-    
-    subgraph Gateway ["FastAPI Gateway and Session Layer"]
-        Main["main.py (FastAPI App)"]
-        Session["session.py (LiveSessionManager)"]
-        Lock["_worker_lock (asyncio.Lock)"]
-        Mirror["current_code (Live Mirror)"]
-    end
-    
-    subgraph ConductorEngine ["Voice and Co-Presence Conductor (Gemini Live API)"]
-        Conductor["conductor.py (LiveConductor)"]
-        GeminiLive["google-genai SDK (gemini-3.8-live)"]
+    subgraph Frontend ["Browser Frontend (React 19, Monaco, Web Audio)"]
+        Monaco["Monaco Editor (User Active Buffer)"]
+        GamePreview["GamePreview Component (lastStateRef)"]
+        ArcadeIframe["Arcade Iframe (Canvas Physics Sandbox)"]
+        ThoughtAura["Thought Aura (Streaming UI)"]
+        AudioIO["Web Audio Recorder (16kHz) & Player (24kHz)"]
     end
 
-    subgraph CodingEngine ["Background Coding Engine (Google Antigravity SDK)"]
-        Worker["worker.py (AntigravityWorker)"]
-        FlashModel["google.antigravity and Flash (gemini-3.7-flash)"]
+    subgraph Gateway ["FastAPI Gateway & Session Layer (backend/session.py)"]
+        Session["LiveSessionManager"]
+        WorkerLock["_worker_lock (Serializes Agent Tasks)"]
+        ThreeWayMerge["three_way_merge(base, ai, user)\n+ compute_diff_chunks() Rebasing"]
+        SessionCode["session.current_code (Gateway Mirror)"]
     end
 
-    Client -->|"Audio and Events (/ws/live)"| Session
-    Session -->|"24kHz PCM Voice"| Client
-    Main -.->|"Delegates /ws/live"| Session
-    Session -->|"Audio and Tool Responses"| Conductor
-    Conductor -->|"Voice Chunks and Tool Calls"| Session
-    Conductor -->|"LiveConnectConfig Stream"| GeminiLive
-    GeminiLive -->|"Live Multimodal Stream"| Conductor
-    
-    Session -->|"Enqueues Task via Lock"| Lock
-    Lock -->|"Serialized Execution with Fresh Code"| Worker
-    Worker -->|"Analyzes Ground-Truth Code"| FlashModel
-    FlashModel -->|"Streams Thoughts and Surgical Diffs"| Worker
-    Worker -->|"Emits DiffChunk Edits"| Session
-    Session -->|"Update Mirror and Apply Edits"| Mirror
-    Session -->|"Closed-Loop Environment Update"| Conductor
+    subgraph ConductorEngine ["Voice & Co-Presence Conductor (backend/conductor.py)"]
+        Conductor["LiveConductor"]
+        ConductorMirror["conductor.current_code (for inspect_code)"]
+        GeminiLive["Gemini Live API (gemini-3.8-live)"]
+    end
+
+    subgraph CodingEngine ["Background Coding Worker (backend/worker.py)"]
+        Worker["AntigravityWorker"]
+        Workspace["Ephemeral Workspace (breakout.js)"]
+        FlashModel["Google Antigravity Agent (gemini-3.7-flash)"]
+    end
+
+    %% User Audio & Interaction Flow
+    AudioIO <-->|"Binary PCM Audio & Control Frames (/ws/live)"| Session
+    Monaco -->|"editor_sync (Bypasses Lock)"| SessionCode
+    SessionCode -->|"Sync Mirror"| ConductorMirror
+
+    %% Conductor & Live Voice Flow
+    Session <-->|"Bi-directional Audio & Tool Events"| Conductor
+    Conductor <-->|"WebSockets (LiveConnectConfig)"| GeminiLive
+
+    %% Worker Execution & Concurrency Rebase Flow
+    Conductor -->|"dispatch_code_task"| WorkerLock
+    WorkerLock -->|"1. Snapshot base_code"| Worker
+    Worker -->|"2. Mount breakout.js"| Workspace
+    Workspace <-->|"3. edit_file & view_file"| FlashModel
+    FlashModel -.->|"4. on_thought -> WS thought_stream"| ThoughtAura
+    Workspace -->|"5. Read modified code (ai_text)"| Worker
+    Worker -->|"6. Return modified_code + base diffs"| Session
+    Session -->|"7. If user edited mid-task, rebase"| ThreeWayMerge
+    ThreeWayMerge -->|"8. WS code_diff (1-indexed DiffChunks)"| Monaco
+    ThreeWayMerge -->|"Update Mirror"| SessionCode
+    Session -->|"9. Closed-loop notify_task_completed/failed"| Conductor
+
+    %% Game Loop & State Restoration
+    Monaco -->|"Updates App code state"| GamePreview
+    GamePreview -->|"srcdoc reload with __SAVED_GAME_STATE__"| ArcadeIframe
+    ArcadeIframe -->|"postMessage(GAME_STATE_UPDATE) -> lastStateRef"| GamePreview
+    Conductor -.->|"WS reaction -> postMessage(TRIGGER_REACTION)"| GamePreview
 ```
 
 ### How the Two SDKs Cooperate

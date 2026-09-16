@@ -24,7 +24,8 @@
 flowchart TD
     subgraph Frontend ["Browser Frontend (React 19, Monaco, Web Audio)"]
         Monaco["Monaco Editor (User Active Buffer)"]
-        Arcade["Interactive Arcade Iframe (Canvas Sandbox)"]
+        GamePreview["GamePreview Component (lastStateRef)"]
+        ArcadeIframe["Arcade Iframe (Canvas Physics Sandbox)"]
         ThoughtAura["Thought Aura (Streaming UI)"]
         AudioIO["Web Audio Recorder (16kHz) & Player (24kHz)"]
     end
@@ -62,18 +63,19 @@ flowchart TD
     WorkerLock -->|"1. Snapshot base_code"| Worker
     Worker -->|"2. Mount breakout.js"| Workspace
     Workspace <-->|"3. edit_file & view_file"| FlashModel
-    FlashModel -->|"4. Stream reasoning thoughts"| ThoughtAura
+    FlashModel -.->|"4. on_thought -> WS thought_stream"| ThoughtAura
     Workspace -->|"5. Read modified code (ai_text)"| Worker
     Worker -->|"6. Return modified_code + base diffs"| Session
     Session -->|"7. If user edited mid-task, rebase"| ThreeWayMerge
-    ThreeWayMerge -->|"8. Surgical 1-indexed DiffChunks"| Monaco
+    ThreeWayMerge -->|"8. WS code_diff (1-indexed DiffChunks)"| Monaco
     ThreeWayMerge -->|"Update Mirror"| SessionCode
     Session -->|"9. Closed-loop notify_task_completed/failed"| Conductor
 
     %% Game Loop & State Restoration
-    Monaco -->|"Code Reload with State Prelude"| Arcade
-    Arcade -->|"GAME_STATE_UPDATE (score, lives, bricks)"| Monaco
-    Conductor -->|"react_emotion (confetti, sparkles)"| Arcade
+    Monaco -->|"Updates App code state"| GamePreview
+    GamePreview -->|"srcdoc reload with __SAVED_GAME_STATE__"| ArcadeIframe
+    ArcadeIframe -->|"postMessage(GAME_STATE_UPDATE) -> lastStateRef"| GamePreview
+    Conductor -.->|"WS reaction -> postMessage(TRIGGER_REACTION)"| GamePreview
 ```
 
 For an in-depth breakdown of concurrency locks, 3-way merge rebasing, reverse-order diff patching, and session resumption, check out [**`BACKEND.md`**](BACKEND.md).
