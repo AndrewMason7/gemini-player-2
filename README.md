@@ -22,41 +22,61 @@
 
 ```mermaid
 flowchart TD
-    Client["Browser Client (React 19, Monaco, Web Audio)"]
-
-    subgraph Gateway ["FastAPI Gateway and Session Layer"]
-        Session["LiveSessionManager (backend/session.py)"]
-        WorkerLock["asyncio.Lock (Concurrency Serialization)"]
-        CodeMirror["Live Code Mirror (Ground-Truth State)"]
+    subgraph Frontend ["Browser Frontend (React 19, Monaco, Web Audio)"]
+        Monaco["Monaco Editor (User Active Buffer)"]
+        Arcade["Interactive Arcade Iframe (Canvas Sandbox)"]
+        ThoughtAura["Thought Aura (Streaming UI)"]
+        AudioIO["Web Audio Recorder (16kHz) & Player (24kHz)"]
     end
 
-    subgraph ConductorEngine ["Voice and Co-Presence Conductor"]
-        Conductor["LiveConductor (backend/conductor.py)"]
+    subgraph Gateway ["FastAPI Gateway & Session Layer (backend/session.py)"]
+        Session["LiveSessionManager"]
+        WorkerLock["_worker_lock (Serializes Agent Tasks)"]
+        ThreeWayMerge["three_way_merge(base, ai, user)\n+ compute_diff_chunks() Rebasing"]
+        SessionCode["session.current_code (Gateway Mirror)"]
+    end
+
+    subgraph ConductorEngine ["Voice & Co-Presence Conductor (backend/conductor.py)"]
+        Conductor["LiveConductor"]
+        ConductorMirror["conductor.current_code (for inspect_code)"]
         GeminiLive["Gemini Live API (gemini-3.8-live)"]
     end
 
-    subgraph CodingEngine ["Background Coding Worker"]
-        Worker["AntigravityWorker (backend/worker.py)"]
-        FlashModel["Gemini Flash (gemini-3.7-flash)"]
+    subgraph CodingEngine ["Background Coding Worker (backend/worker.py)"]
+        Worker["AntigravityWorker"]
+        Workspace["Ephemeral Workspace (breakout.js)"]
+        FlashModel["Google Antigravity Agent (gemini-3.7-flash)"]
     end
 
-    Client -->|"Audio and Events (/ws/live)"| Session
-    Session -->|"Voice Audio Chunks"| Client
-    Session -->|"Audio and Tool Triggers"| Conductor
-    Conductor -->|"Model Speech Parts"| Session
-    Conductor -->|"LiveConnectConfig Stream"| GeminiLive
-    GeminiLive -->|"Audio and Tool Calls"| Conductor
+    %% User Audio & Interaction Flow
+    AudioIO <-->|"Binary PCM Audio & Control Frames (/ws/live)"| Session
+    Monaco -->|"editor_sync (Bypasses Lock)"| SessionCode
+    SessionCode -->|"Sync Mirror"| ConductorMirror
 
-    Session -->|"Serializes Tasks"| WorkerLock
-    WorkerLock -->|"Workspace File breakout.js"| Worker
-    Worker -->|"Prompt and Tools (view/edit)"| FlashModel
-    FlashModel -->|"Thoughts and Workspace File Edits"| Worker
-    Worker -->|"Deterministic DiffChunks"| Session
-    Session -->|"Update Mirror"| CodeMirror
-    Session -->|"Notify Task Complete / Failed"| Conductor
+    %% Conductor & Live Voice Flow
+    Session <-->|"Bi-directional Audio & Tool Events"| Conductor
+    Conductor <-->|"WebSockets (LiveConnectConfig)"| GeminiLive
+
+    %% Worker Execution & Concurrency Rebase Flow
+    Conductor -->|"dispatch_code_task"| WorkerLock
+    WorkerLock -->|"1. Snapshot base_code"| Worker
+    Worker -->|"2. Mount breakout.js"| Workspace
+    Workspace <-->|"3. edit_file & view_file"| FlashModel
+    FlashModel -->|"4. Stream reasoning thoughts"| ThoughtAura
+    Workspace -->|"5. Read modified code (ai_text)"| Worker
+    Worker -->|"6. Return modified_code + base diffs"| Session
+    Session -->|"7. If user edited mid-task, rebase"| ThreeWayMerge
+    ThreeWayMerge -->|"8. Surgical 1-indexed DiffChunks"| Monaco
+    ThreeWayMerge -->|"Update Mirror"| SessionCode
+    Session -->|"9. Closed-loop notify_task_completed/failed"| Conductor
+
+    %% Game Loop & State Restoration
+    Monaco -->|"Code Reload with State Prelude"| Arcade
+    Arcade -->|"GAME_STATE_UPDATE (score, lives, bricks)"| Monaco
+    Conductor -->|"react_emotion (confetti, sparkles)"| Arcade
 ```
 
-For an in-depth breakdown of concurrency locks, reverse-order diff patching, and session resumption, check out [**`BACKEND.md`**](BACKEND.md).
+For an in-depth breakdown of concurrency locks, 3-way merge rebasing, reverse-order diff patching, and session resumption, check out [**`BACKEND.md`**](BACKEND.md).
 
 ---
 
@@ -75,7 +95,7 @@ This project is a functional **Proof of Concept (PoC)** demonstrating how to sol
 │                 FRONT-OF-HOUSE (Conductor)                  │
 │              Gemini Multimodal Live API (WebSockets)         │
 │  • 16kHz microphone stream -> 24kHz synthesized voice       │
-│  • Sub-second latency, native VAD, and barge-in cutoffs     │
+│  • Full-duplex speech, server VAD, and instant barge-in    │
 │  • Monaco multi-cursor co-presence (move_cursor)            │
 │  • Visual game screen effects (react_emotion)               │
 └──────────────────────────────┬──────────────────────────────┘
@@ -85,16 +105,18 @@ This project is a functional **Proof of Concept (PoC)** demonstrating how to sol
 │                 BACK-OF-HOUSE (Coding Worker)               │
 │                   Google Antigravity SDK                    │
 │  • Streams reasoning tokens (response.thoughts -> Aura)     │
-│  • Native workspace file operations (view_file / edit_file) │
+│  • Native workspace file operations (edit_file / view_file) │
 │  • Deterministic difflib chunk generation (DiffChunk)       │
-│  • Monaco executes edits without resetting user caret/undo  │
 └──────────────────────────────┬──────────────────────────────┘
-                               │ 2. Closed-Loop Telemetry (send_realtime_input)
+                               │ 2. Concurrent Edits & 3-Way Merge Rebasing
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 CLOSED-LOOP VOICE CONTINUITY                │
-│  The Conductor's internal code mirror updates in real time. │
-│  Gemini speaks honestly about what changed (or failed)!    │
+│             CONCURRENCY REBASE & CANVAS SANDBOX             │
+│  • If user typed mid-task: three_way_merge(base, ai, user) │
+│  • Recomputes 1-indexed Monaco DiffChunks against user lines│
+│  • Monaco applies edits via executeEdits (preserves caret)  │
+│  • Iframe injects __SAVED_GAME_STATE__ to resume gameplay   │
+│  • Conductor notifies Gemini Live: task completed or failed │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -105,14 +127,15 @@ This project is a functional **Proof of Concept (PoC)** demonstrating how to sol
 
 2. **Back-of-House (Google Antigravity SDK Engine)**:
    - Powered by `google.antigravity` (default model: `gemini-3.7-flash`).
-   - Modifies `breakout.js` in an isolated agent workspace using `BuiltinTools.VIEW_FILE` and `BuiltinTools.EDIT_FILE`.
+   - Modifies `breakout.js` in an isolated agent workspace using `BuiltinTools.EDIT_FILE` and `BuiltinTools.VIEW_FILE`.
    - Streams raw reasoning tokens (`response.thoughts`) over WebSockets to illuminate the browser's **Thought Aura**.
    - Calculates surgical 1-indexed line diffs (`DiffChunk`) against the original file, applying edits safely to Monaco without blocking audio.
 
-3. **The Closed-Loop Feedback & Honest Error Bridge**:
-   - The moment the Antigravity worker finishes applying code changes, the backend whispers an environmental update directly into the Live session stream using `session.send_realtime_input`.
-   - If an edit fails or makes no changes, the backend honestly whispers the failure to the Live model so it candidly informs the user rather than hallucinating success.
-   - The Live Agent's internal code mirror updates instantly, allowing it to naturally discuss, inspect, and celebrate what it just built with you.
+3. **Concurrency Reconciliation & State-Preserving Sandbox**:
+   - If the user types in Monaco while the Antigravity worker is executing, `three_way_merge` combines the base snapshot, the worker's changes, and the user's active editor buffer.
+   - Monaco applies surgical diffs via `executeEdits` without blowing away the user's cursor or undo history.
+   - The interactive canvas sandbox captures game state snapshots (`GAME_STATE_UPDATE`) and injects `window.__SAVED_GAME_STATE__` across code reloads so gameplay resumes seamlessly.
+   - The moment the worker finishes, the backend whispers an environmental update directly into the Live session stream using `session.send_realtime_input` so Gemini honestly announces success or failure.
 
 ---
 

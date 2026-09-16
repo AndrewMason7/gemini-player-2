@@ -163,9 +163,9 @@ backend/
 
 ---
 
-### B. Surgical Code Modification & Concurrency Lock
+### B. Surgical Code Modification & 3-Way Merge Concurrency
 
-To prevent race conditions when multiple code modification tasks are dispatched in rapid succession, the backend uses a strictly synchronized workflow:
+To prevent race conditions when the user edits code in Monaco while an Antigravity worker task is in-flight, the backend uses a strictly synchronized 3-way merge workflow:
 
 ```
 Conductor Tool Call (dispatch_code_task)
@@ -178,27 +178,41 @@ session.on_dispatch_task(instruction)
               │
               ├─► 1. Emit StatusEvent ("coding")
               │
-              ├─► 2. Read self.current_code (Fresh Code Mirror)
+              ├─► 2. Snapshot base_code = self.current_code
               │
               ├─► 3. worker.execute_task()
               │        ├── Mount isolated workspace with breakout.js
-              │        ├── Agent modifies breakout.js via view_file / edit_file
+              │        ├── Agent modifies breakout.js via edit_file / view_file
               │        ├── Stream reasoning thoughts -> ThoughtStreamEvent
               │        └── compute_diff_chunks() produces Monaco DiffChunk objects
               │
-              ├─► 4. apply_code_edits() (Reverse line replacement)
+              ├─► 4. Check for Concurrent User Edits:
+              │        ├── If self.current_code == snapshot_code:
+              │        │     Apply diffs directly to buffer
+              │        └── If self.current_code != snapshot_code:
+              │              ├── three_way_merge(base, ai, user)
+              │              └── compute_diff_chunks(self.current_code, merged_code)
               │
-              ├─► 5. Update backend code mirror & conductor.update_code()
+              ├─► 5. Update backend mirror (self.current_code) & conductor.update_code()
               │
-              ├─► 6. Send CodeDiffEvent to frontend
+              ├─► 6. Send (rebased) CodeDiffEvent to frontend
               │
               └─► 7. conductor.notify_task_completed() (Closed-loop feedback)
 ```
 
-#### Why the Lock Matters
-If a user asks for two adjustments ("make the paddle wider" followed by "change ball color to gold"):
-- **Without `_worker_lock`**: Both tasks snapshot `self.current_code` at invocation time. The second task calculates line edits against stale line indexes, overwriting or corrupting edits made by the first task.
-- **With `_worker_lock`**: Task 2 waits for Task 1 to complete its edits. Task 2 then reads `self.current_code` containing Task 1's changes and computes edits against the fresh line indexes.
+#### The Four Code Buffers in the Ecosystem
+
+| Buffer | Location | Purpose & Lifetime |
+|---|---|---|
+| **Monaco Active Buffer** | Browser Frontend | The user's active editor buffer where human keystrokes occur. |
+| **`session.current_code`** | Gateway Session | Gateway mirror; immediately receives `editor_sync` from Monaco. |
+| **`conductor.current_code`** | Conductor Engine | Synchronized code mirror used by `gemini-3.8-live` for `inspect_code()`. |
+| **`breakout.js`** | Ephemeral Workspace | Isolated disk file mounted for `google.antigravity.Agent` per task; deleted on turn completion. |
+
+#### Why `three_way_merge` Eliminates the Index Race
+If a background worker starts with a snapshot where the ball is on line 5, but while the worker is running the user types 3 header lines at line 1 (shifting the ball to line 8):
+- **Raw Static Diff**: Would emit `start_line: 5`, overwriting line 5 (`let lives = 3`) in the user's active editor.
+- **3-Way Merge Rebasing**: Merges the base snapshot, the worker's modifications, and the user's latest buffer via `three_way_merge(base, ai, user)`, then recomputes diff chunks against the user's current editor (`compute_diff_chunks(self.current_code, merged_code)`). Monaco receives diffs targeting line 8, preserving both user insertions and AI modifications in harmony.
 
 ---
 
@@ -222,7 +236,7 @@ Applying edits from the bottom of the file upwards guarantees that earlier line 
 
 ### D. Deterministic Diff Generation from Antigravity Workspace
 
-In [`AntigravityWorker`](backend/worker.py), the agent operates on `breakout.js` using native `BuiltinTools.VIEW_FILE` and `BuiltinTools.EDIT_FILE`. Once the agent finishes modifying the file in its isolated workspace, [`compute_diff_chunks(old_code, new_code)`](backend/worker.py#L20) uses `difflib.SequenceMatcher` to compute deterministic, 1-indexed `DiffChunk` objects:
+In [`AntigravityWorker`](backend/worker.py), the agent operates on `breakout.js` using native `BuiltinTools.EDIT_FILE` and `BuiltinTools.VIEW_FILE`. Once the agent finishes modifying the file in its isolated workspace, [`compute_diff_chunks(old_code, new_code)`](backend/worker.py#L20) uses `difflib.SequenceMatcher` to compute deterministic, 1-indexed `DiffChunk` objects:
 
 ```python
 matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
@@ -247,7 +261,7 @@ All text frames across `/ws/live` are JSON payloads conforming to contracts in [
 | **Binary Frame** | `bytes` (16kHz linear PCM) | Streaming microphone audio input from client. |
 | **`text_input`** | `{"type": "text_input", "text": str}` | Text message sent directly to Gemini Live. |
 | **`audio_stream_end`** | `{"type": "audio_stream_end"}` | Signals mic silence / mute to trigger model turn. |
-| **`user_interrupt`** | `{"type": "user_interrupt"}` | Explicit client barge-in interruption signal. |
+| **`user_interrupt`** | `{"type": "user_interrupt"}` | Client-side barge-in trigger (flushes Web Audio player and resets speech state locally; server barge-in is handled natively by Gemini Live VAD returning `interrupted: true`). |
 | **`editor_sync`** | `{"type": "editor_sync", "code": str}` | User edited code in Monaco; syncs backend mirror. |
 | **`ping`** | `{"type": "ping", "timestamp": int}` | Heartbeat check; server immediately returns pong. |
 
@@ -256,7 +270,7 @@ All text frames across `/ws/live` are JSON payloads conforming to contracts in [
 | Event Type | Structure | Description |
 |---|---|---|
 | **Binary Frame** | `bytes` (24kHz PCM) | Streaming synthesized model voice output. |
-| **`status`** | `{"type": "status", "state": str, "message": str}` | State updates (`listening`, `coding`, `idle`, `reconnecting`, `error`). |
+| **`status`** | `{"type": "status", "state": str, "message": str}` | State updates (`disconnected`, `connecting`, `reconnecting`, `idle`, `listening`, `speaking`, `coding`). |
 | **`transcript`** | `{"type": "transcript", "sender": "user"\|"gemini", "text": str}` | Real-time speech-to-text dialogue transcripts. |
 | **`interrupted`** | `{"type": "interrupted"}` | Notifies client to flush Web Audio playback buffer. |
 | **`thought_stream`** | `{"type": "thought_stream", "text": str}` | Streaming reasoning chunks from `gemini-3.7-flash` (Antigravity SDK) for the Thought Aura. |
@@ -290,7 +304,7 @@ The backend includes comprehensive test coverage:
 - **Conductor Unit Tests** ([`tests/test_conductor.py`](tests/test_conductor.py)): Mocked Live API sessions, tool generation, multi-turn loop persistence, audio streaming, session resumption.
 - **Gateway & Integration Tests** ([`tests/test_gateway.py`](tests/test_gateway.py)): REST routes, WebSocket handshakes, heartbeat ping/pong, and worker concurrency serialization verification.
 - **Diff & Merge Tests** ([`tests/test_worker_diff.py`](tests/test_worker_diff.py)): 3-way merge conflict resolution, deterministic difflib chunking, multi-line modifications, whitespace indentation, and trailing newline preservation.
-- **Game Transformation Tests** ([`tests/test_game_edits.py`](tests/test_game_edits.py)): Full AST diff calculation and headless JS execution verifying Breakout game physics.
+- **Game Transformation Tests** ([`tests/test_game_edits.py`](tests/test_game_edits.py)): Full difflib sequence matching diff calculation and headless JS execution verifying Breakout game physics.
 - **Model Contract Tests** ([`tests/test_models.py`](tests/test_models.py)): Serialization and validation of all Pydantic event contracts.
 
 Run the test suite:
