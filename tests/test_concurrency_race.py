@@ -148,3 +148,97 @@ async def test_rapid_user_keystrokes_during_worker_execution():
     # Final code must contain the last keystroke (x = 5) and the worker edit (y = 100)
     assert "let x = 5;" in session.current_code
     assert "let y = 100;" in session.current_code
+
+
+@pytest.mark.anyio
+async def test_concurrency_index_race_user_inserts_lines_above():
+    """Verifies the index race condition where user inserts lines *above* the target
+    line while worker is executing. Ensures 3-way merge rebases diffs against the
+    user's active buffer and emits shifted line numbers to Monaco.
+    """
+    mock_ws = AsyncMock()
+    mock_conductor = MagicMock()
+    mock_conductor.update_code = MagicMock()
+    mock_conductor.notify_task_completed = AsyncMock()
+
+    initial_code = (
+        "let score = 0;\n"  # Line 1
+        "let lives = 3;\n"  # Line 2
+        "let ball = {\n"  # Line 3
+        '  color: "#f43f5e"\n'  # Line 4 (Target line)
+        "};\n"
+    )
+
+    worker_started = asyncio.Event()
+    user_edited = asyncio.Event()
+
+    async def delayed_worker_task(
+        instruction, current_code, workspace_dir=None, on_thought=None
+    ):
+        worker_started.set()
+        await user_edited.wait()
+        await asyncio.sleep(0.01)
+        # AI modified code in workspace
+        ai_modified = (
+            'let score = 0;\nlet lives = 3;\nlet ball = {\n  color: "#fbbf24"\n};\n'
+        )
+        return CodeDiffEvent(
+            description="Changed ball color to gold",
+            edits=[
+                DiffChunk(
+                    start_line=4,
+                    end_line=4,
+                    new_text='  color: "#fbbf24"\n',
+                    description="Turn ball gold",
+                )
+            ],
+            modified_code=ai_modified,
+        )
+
+    mock_worker = MagicMock()
+    mock_worker.execute_task = AsyncMock(side_effect=delayed_worker_task)
+
+    session = LiveSessionManager(
+        websocket=mock_ws,
+        initial_code=initial_code,
+        worker=mock_worker,
+    )
+    session.conductor = mock_conductor
+
+    # 1. Voice command arrives: worker starts with snapshot of initial_code
+    dispatch_task = asyncio.create_task(session.on_dispatch_task("make ball gold", ""))
+    await worker_started.wait()
+
+    # 2. User inserts 2 lines at the very top (shifting ball line from 4 to 6)
+    user_inserted_code = (
+        "// Game Header\n"  # Line 1
+        "const MAX_SCORE = 1000;\n"  # Line 2
+        "let score = 0;\n"  # Line 3
+        "let lives = 3;\n"  # Line 4
+        "let ball = {\n"  # Line 5
+        '  color: "#f43f5e"\n'  # Line 6 (Shifted by 2 lines!)
+        "};\n"
+    )
+    await session.handle_client_message(
+        {"text": json.dumps({"type": "editor_sync", "code": user_inserted_code})}
+    )
+    user_edited.set()
+
+    # 3. Wait for worker and session rebasing to finish
+    await dispatch_task
+    await asyncio.gather(*list(session.active_worker_tasks))
+
+    # 4. Check session.current_code has both user headers and AI gold ball
+    assert "// Game Header" in session.current_code
+    assert "const MAX_SCORE = 1000;" in session.current_code
+    assert 'color: "#fbbf24"' in session.current_code
+    assert 'color: "#f43f5e"' not in session.current_code
+
+    # 5. Check that CodeDiffEvent emitted to client was REBASED targeting line 6 (not stale line 4)
+    sent_json = [json.loads(c[0][0]) for c in mock_ws.send_text.call_args_list]
+    diff_msgs = [m for m in sent_json if m.get("type") == "code_diff"]
+    assert len(diff_msgs) == 1
+    rebased_edit = diff_msgs[0]["edits"][0]
+    assert rebased_edit["start_line"] == 6
+    assert rebased_edit["end_line"] == 6
+    assert 'color: "#fbbf24"' in rebased_edit["new_text"]

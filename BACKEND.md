@@ -12,7 +12,7 @@ The defining architectural thesis of **Gemini: Player 2** is solving the fundame
 
 ### The Engineering Tradeoff
 * **The Voice Bottleneck**: Real-time conversational models like `gemini-3.8-live` are built for ultra-fast, turn-by-turn conversational audio. They must process 16kHz linear PCM frames, evaluate voice activity detection (VAD), and emit 24kHz synthesized audio parts in under 500 milliseconds. If you force a streaming voice model to emit a massive 500-line code refactor, the voice connection locks up, audio buffers stall, and the illusion of sitting next to a living human co-pilot is shattered.
-* **The Coding Agent Tradeoff**: Autonomous coding agent frameworks like the **Google Antigravity SDK** (`google-antigravity`) excel at multi-step reasoning, workspace inspection, policy hooks, thought streaming (`response.thoughts`), and surgical line diff generation using high-horsepower reasoning models like `gemini-3.8-flash`. However, coding agents operate asynchronously and possess no native audio pipeline, full-duplex WebSocket framing, or barge-in mechanics.
+* **The Coding Agent Tradeoff**: Autonomous coding agent frameworks like the **Google Antigravity SDK** (`google-antigravity`) excel at multi-step reasoning, workspace inspection, policy hooks, thought streaming (`response.thoughts`), and surgical line diff generation using high-horsepower reasoning models like `gemini-3.7-flash`. However, coding agents operate asynchronously and possess no native audio pipeline, full-duplex WebSocket framing, or barge-in mechanics.
 
 **Gemini: Player 2 solves this by building an asynchronous orchestration bridge that links both SDKs into a single, unified pair programmer:**
 
@@ -34,7 +34,7 @@ flowchart TD
 
     subgraph CodingEngine ["Background Coding Engine (Google Antigravity SDK)"]
         Worker["worker.py (AntigravityWorker)"]
-        FlashModel["google.antigravity and Flash (gemini-3.8-flash)"]
+        FlashModel["google.antigravity and Flash (gemini-3.7-flash)"]
     end
 
     Client -->|"Audio and Events (/ws/live)"| Session
@@ -66,20 +66,28 @@ flowchart TD
   - `react_emotion(mood, effect)`: Triggers screen reactions and emote states.
   - `dispatch_code_task(instruction, context_snippet)`: **The Bridge.** Instead of generating code itself, the Live model invokes this tool with a high-level instruction and immediately keeps conversing.
 
-#### 2. Back-of-House: Google Antigravity SDK (`google-antigravity`)
-- **Worker Execution**: Managed in [`AntigravityWorker`](backend/worker.py#L51). Configured with `gemini-3.8-flash` via `google.antigravity.Agent` and `LocalAgentConfig`.
+##### 2. Back-of-House: Google Antigravity SDK (`google-antigravity`)
+- **Worker Execution**: Managed in [`AntigravityWorker`](backend/worker.py#L125). Configured with `gemini-3.7-flash` (the default model of the Antigravity SDK) via `google.antigravity.Agent` and `LocalAgentConfig` with workspace isolation and native `BuiltinTools.VIEW_FILE` / `BuiltinTools.EDIT_FILE`.
 - **Thought Streaming (`response.thoughts`)**: As the Antigravity worker reasons about game physics, collisions, or graphics, raw thought tokens are intercepted in real time and pushed over the WebSocket as `ThoughtStreamEvent` payloads, illuminating the UI's ambient **Thought Aura**.
-- **1-Indexed Numbered Code Analysis**: Code is formatted with explicit line numbers (`f"{i + 1}: {line}"`) so the model has ground-truth line anchors across 550+ lines of canvas JavaScript.
-- **Surgical Diff Output**: The worker outputs structured `DiffChunk` objects (`start_line`, `end_line`, `new_text`) that are applied to Monaco via `executeEdits`, preserving user cursor focus and undo/redo stacks.
+- **Native Workspace File Operations**: Code is written to `breakout.js` in an isolated temporary workspace directory. The agent interacts with the codebase through native file tools (`view_file`, `edit_file`) rather than prompt-based line number arithmetic.
+- **Deterministic Diff Output**: Changes to `breakout.js` are converted into mathematical `DiffChunk` objects (`start_line`, `end_line`, `new_text`) via `compute_diff_chunks(old_code, new_code)` using `difflib.SequenceMatcher`, which are applied to Monaco via `executeEdits` without resetting user caret or undo stacks.
 
-#### 3. The Closed-Loop Telemetry Bridge
-- Once the Antigravity worker successfully applies the diffs, two critical synchronizations occur:
-  1. **Memory Synchronization**: [`LiveSessionManager`](backend/session.py#L117) updates its code mirror and invokes `conductor.update_code(self.current_code)`. Subsequent calls to `inspect_code()` read the freshly patched JavaScript.
-  2. **Realtime Telemetry Injection**: [`LiveConductor.notify_task_completed`](backend/conductor.py#L188) whispers an environmental update directly into the Live session stream using `session.send_realtime_input(text=...)`:
-     ```text
-     [Environment update: Antigravity worker finished applying code changes on line(s) [105]: Change the ball color and its trailing glow to vibrant gold (#fbbf24).]
-     ```
-- The Live model consumes this event mid-conversation, reacts naturally, and talks enthusiastically about the newly added gameplay mechanics without ever experiencing audio stutter or session drops.
+#### 3. The Closed-Loop Telemetry & Honest Error Bridge
+- Once the Antigravity worker finishes, one of two flows occurs:
+  1. **Success Flow**:
+     - [`LiveSessionManager`](backend/session.py#L140) updates its code mirror and invokes `conductor.update_code(self.current_code)`. Subsequent calls to `inspect_code()` read the freshly patched JavaScript.
+     - [`LiveConductor.notify_task_completed`](backend/conductor.py#L188) whispers an environmental update directly into the Live session stream using `session.send_realtime_input(text=...)`:
+       ```text
+       [Environment update: Antigravity worker finished applying code changes on line(s) [105]: Change the ball color and its trailing glow to vibrant gold (#fbbf24).]
+       ```
+     - The Live model consumes this event mid-conversation, reacts naturally, and talks enthusiastically about the newly added gameplay mechanics.
+  2. **Failure Flow**:
+     - If the agent makes no changes or throws an error, `session.py` calls [`LiveConductor.notify_task_failed`](backend/conductor.py#L210).
+     - The Conductor whispers an honest environmental failure event to `gemini-3.8-live`:
+       ```text
+       [Environment update: Antigravity worker FAILED to apply code changes for "Double ball speed". Reason: syntax error... Speak to the user honestly: tell them you couldn't make that edit, explain what went wrong, and sound authentic—do not claim success.]
+       ```
+     - The voice model speaks candidly and explains what happened, preventing false success hallucinations.
 
 ---
 
@@ -105,7 +113,7 @@ backend/
 | [`main.py`](backend/main.py) | App configuration, CORS, REST endpoints (`/api/health`, `/api/starter-code`), static mounts, `/ws/live` delegate. | `app`, `health_check()`, `starter_code()`, `live_websocket_endpoint()` |
 | [`session.py`](backend/session.py) | Client WebSocket connection manager, message deserialization, task serialization, code mirror sync. | [`LiveSessionManager`](backend/session.py#L53), [`apply_code_edits()`](backend/session.py#L34), [`handle_live_session()`](backend/session.py#L315) |
 | [`conductor.py`](backend/conductor.py) | Native Gemini Live WebSocket management (`client.aio.live.connect`), audio streaming, tool calls, multi-turn loop. | [`LiveConductor`](backend/conductor.py#L31), `_build_tools()`, [`listen_loop()`](backend/conductor.py#L248) |
-| [`worker.py`](backend/worker.py) | Antigravity background worker, line-numbered prompt construction, thought streaming, diff parsing & sanitization. | [`AntigravityWorker`](backend/worker.py#L51), `execute_task()`, `_parse_diff_output()` |
+| [`worker.py`](backend/worker.py) | Antigravity background worker, workspace sandbox management, thought streaming, deterministic diff generation. | [`AntigravityWorker`](backend/worker.py#L128), `execute_task()`, `compute_diff_chunks()` |
 | [`models.py`](backend/models.py) | Pydantic event schemas for all bidirectional WebSocket traffic. | `DiffChunk`, `CodeDiffEvent`, `ThoughtStreamEvent`, `CursorMoveEvent`, `EmotionEvent`, `StatusEvent`, `PingEvent`, `PongEvent` |
 | [`constants.py`](backend/constants.py) | Fixed configurations: `DEFAULT_BREAKOUT_CODE`, system instructions, default voice (`Puck`), default models. | `DEFAULT_BREAKOUT_CODE`, `CONDUCTOR_SYSTEM_INSTRUCTION` |
 
@@ -173,9 +181,10 @@ session.on_dispatch_task(instruction)
               ├─► 2. Read self.current_code (Fresh Code Mirror)
               │
               ├─► 3. worker.execute_task()
-              │        ├── Format code with 1-indexed line numbers ("183: initBricks();")
+              │        ├── Mount isolated workspace with breakout.js
+              │        ├── Agent modifies breakout.js via view_file / edit_file
               │        ├── Stream reasoning thoughts -> ThoughtStreamEvent
-              │        └── Parse surgical JSON edits (start_line, end_line, new_text)
+              │        └── compute_diff_chunks() produces Monaco DiffChunk objects
               │
               ├─► 4. apply_code_edits() (Reverse line replacement)
               │
@@ -211,16 +220,19 @@ Applying edits from the bottom of the file upwards guarantees that earlier line 
 
 ---
 
-### D. Ground-Truth Line Numbering & Sanitization
+### D. Deterministic Diff Generation from Antigravity Workspace
 
-In [`AntigravityWorker`](backend/worker.py#L51), code is fed into `gemini-3.8-flash` with explicit 1-indexed line prefixes:
+In [`AntigravityWorker`](backend/worker.py), the agent operates on `breakout.js` using native `BuiltinTools.VIEW_FILE` and `BuiltinTools.EDIT_FILE`. Once the agent finishes modifying the file in its isolated workspace, [`compute_diff_chunks(old_code, new_code)`](backend/worker.py#L20) uses `difflib.SequenceMatcher` to compute deterministic, 1-indexed `DiffChunk` objects:
 
 ```python
-code_lines = current_code.splitlines()
-numbered_code = "\n".join(f"{i + 1}: {line}" for i, line in enumerate(code_lines))
+matcher = difflib.SequenceMatcher(None, old_lines, new_lines)
+for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    if tag == "equal":
+        continue
+    # Produces surgical 1-indexed Monaco DiffChunk replacement ranges
 ```
 
-This prevents off-by-N line hallucinations in files with hundreds of lines. Additionally, [`_parse_diff_output`](backend/worker.py#L200) includes defense-in-depth sanitization: if the model echoes line prefixes (e.g. `183: initBricks();`), the prefix is automatically stripped before emitting the `DiffChunk`.
+This eliminates off-by-N line hallucinations and allows the frontend Monaco editor to apply changes surgically via `executeEdits` without blowing away the user's cursor position or undo history.
 
 ---
 
@@ -247,7 +259,7 @@ All text frames across `/ws/live` are JSON payloads conforming to contracts in [
 | **`status`** | `{"type": "status", "state": str, "message": str}` | State updates (`listening`, `coding`, `idle`, `reconnecting`, `error`). |
 | **`transcript`** | `{"type": "transcript", "sender": "user"\|"gemini", "text": str}` | Real-time speech-to-text dialogue transcripts. |
 | **`interrupted`** | `{"type": "interrupted"}` | Notifies client to flush Web Audio playback buffer. |
-| **`thought_stream`** | `{"type": "thought_stream", "text": str}` | Streaming reasoning chunks from `gemini-3.8-flash` for the Thought Aura. |
+| **`thought_stream`** | `{"type": "thought_stream", "text": str}` | Streaming reasoning chunks from `gemini-3.7-flash` (Antigravity SDK) for the Thought Aura. |
 | **`code_diff`** | `{"type": "code_diff", "description": str, "edits": [DiffChunk]}` | Surgical line edits to apply to Monaco editor. |
 | **`cursor_move`** | `{"type": "cursor_move", "line": int, "ch": int, "gesture": str, "tag": str}` | Player 2 Monaco cursor movement, tag, and gesture. |
 | **`reaction`** | `{"type": "reaction", "mood": str, "effect": str}` | Visual celebratory reaction (`confetti`, `sparkles`, `nod`). |
@@ -275,7 +287,7 @@ The backend includes comprehensive test coverage:
 
 - **Conductor Unit Tests** ([`tests/test_conductor.py`](tests/test_conductor.py)): Mocked Live API sessions, tool generation, multi-turn loop persistence, audio streaming, session resumption.
 - **Gateway & Integration Tests** ([`tests/test_gateway.py`](tests/test_gateway.py)): REST routes, WebSocket handshakes, heartbeat ping/pong, and **worker concurrency serialization verification**.
-- **Diff & Parsing Tests** ([`tests/test_worker_diff.py`](tests/test_worker_diff.py)): JSON markdown fencing, line-prefix stripping, switch-case preservation.
+- **Diff & Parsing Tests** ([`tests/test_worker_diff.py`](tests/test_worker_diff.py)): Deterministic difflib chunking, multi-line modifications, whitespace indentation, and trailing newline preservation.
 - **Model Contract Tests** ([`tests/test_models.py`](tests/test_models.py)): Serialization and validation of all Pydantic event contracts.
 
 Run the test suite:

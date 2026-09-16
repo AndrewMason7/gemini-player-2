@@ -261,4 +261,3 @@ async def test_session_empty_edits_calls_notify_task_failed():
     sent_msgs = [json.loads(c[0][0]) for c in mock_ws.send_text.call_args_list]
     status_msgs = [m for m in sent_msgs if m.get("type") == "status"]
     assert any("Edit failed" in m.get("message", "") for m in status_msgs)
-

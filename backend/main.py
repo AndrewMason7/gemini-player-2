@@ -51,8 +51,7 @@ async def health():
         "service": "Gemini: Player 2 Gateway",
         "has_api_key": has_api_key,
         "vertex": bool(
-            os.getenv("GOOGLE_GENAI_USE_VERTEXAI")
-            or os.getenv("GOOGLE_CLOUD_PROJECT")
+            os.getenv("GOOGLE_GENAI_USE_VERTEXAI") or os.getenv("GOOGLE_CLOUD_PROJECT")
         ),
     }
 

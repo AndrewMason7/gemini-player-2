@@ -1,56 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import { buildGameIframeHtml } from "./GamePreview";
 
 describe("GamePreview - Iframe Error Containment & Resilience", () => {
-    function buildIframeSrcDoc(code: string): string {
-        const sanitizedCode = code.replace(/<\/script/gi, "<\\/script");
-        return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body {
-              background: #090d16;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              height: 100vh;
-              overflow: hidden;
-              font-family: system-ui, sans-serif;
-            }
-            canvas {
-              background: radial-gradient(circle at center, #111827 0%, #030712 100%);
-              border: 1px solid #1f2937;
-              border-radius: 8px;
-              box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-              cursor: pointer;
-              max-width: 100%;
-              max-height: 100%;
-              user-select: none;
-              touch-action: none;
-            }
-          </style>
-        </head>
-        <body>
-          <canvas id="gameCanvas" width="480" height="320"></canvas>
-          <script>
-            window.onerror = function(msg, url, line) {
-              window.parent.postMessage({ type: "GAME_ERROR", message: msg + " (line " + line + ")" }, "*");
-            };
-            try {
-              ${sanitizedCode}
-            } catch (err) {
-              window.parent.postMessage({ type: "GAME_ERROR", message: err.message }, "*");
-            }
-          </script>
-        </body>
-      </html>
-    `;
-    }
 
     it("generates iframe HTML with canvas and error capture traps", () => {
-        const srcdoc = buildIframeSrcDoc("console.log('init');");
+        const srcdoc = buildGameIframeHtml("console.log('init');");
         expect(srcdoc).toContain('<canvas id="gameCanvas"');
         expect(srcdoc).toContain("window.onerror = function");
         expect(srcdoc).toContain("GAME_ERROR");
@@ -124,7 +78,7 @@ describe("GamePreview - Iframe Error Containment & Resilience", () => {
 
     it("safely neutralizes closing </script> tags in code to prevent DOM breakout", () => {
         const maliciousCode = 'const str = "</script><script>window.pwned = true;</script>";';
-        const srcdoc = buildIframeSrcDoc(maliciousCode);
+        const srcdoc = buildGameIframeHtml(maliciousCode);
 
         // Verify that raw unescaped </script> does NOT prematurely close the <script> block
         // Any occurrences of </script before the final closing tag should be escaped as <\/script
@@ -183,19 +137,6 @@ describe("GamePreview - Iframe Error Containment & Resilience", () => {
     });
 
     it("injects window.__SAVED_GAME_STATE__ into iframe prelude when state is preserved", () => {
-        function buildIframeSrcDocWithState(code: string, savedState: unknown): string {
-            const sanitizedCode = code.replace(/<\/script/gi, "<\\/script");
-            const stateInjection = savedState
-                ? `window.__SAVED_GAME_STATE__ = ${JSON.stringify(savedState)};`
-                : "";
-            return `
-              <script>
-                ${stateInjection}
-                ${sanitizedCode}
-              </script>
-            `;
-        }
-
         const testState = {
             score: 450,
             lives: 2,
@@ -204,7 +145,7 @@ describe("GamePreview - Iframe Error Containment & Resilience", () => {
             ball: { x: 120, y: 200, dx: 4, dy: -4, stuck: false },
         };
 
-        const srcdoc = buildIframeSrcDocWithState("console.log('reloaded');", testState);
+        const srcdoc = buildGameIframeHtml("console.log('reloaded');", testState);
         expect(srcdoc).toContain("window.__SAVED_GAME_STATE__ = {");
         expect(srcdoc).toContain('"score":450');
         expect(srcdoc).toContain('"lives":2');

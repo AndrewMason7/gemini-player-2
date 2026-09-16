@@ -6,7 +6,6 @@ import subprocess
 from backend.constants import DEFAULT_BREAKOUT_CODE
 from backend.models import DiffChunk
 from backend.session import apply_code_edits
-from backend.worker import AntigravityWorker
 
 
 def test_ball_actually_turns_gold_result():
@@ -71,29 +70,21 @@ console.log("BALL_COLOR_VERIFIED:" + b.color);
         assert "BALL_COLOR_VERIFIED:#fbbf24" in proc.stdout
 
 
-def test_worker_diff_parsing_and_ball_gold_application():
-    """Verifies that an AntigravityWorker LLM response turning the ball gold
-    is correctly parsed into DiffChunk and mutates DEFAULT_BREAKOUT_CODE to gold.
+def test_compute_diff_chunks_and_ball_gold_application():
+    """Verifies that computing diff chunks between DEFAULT_BREAKOUT_CODE and a version
+    with the gold ball generates exact surgical diff targeting line 105.
     """
-    worker = AntigravityWorker(api_key="mock-key")
-    raw_llm_response = """I have updated the ball's color to vibrant gold with a glowing trail.
-```json
-{
-  "summary": "Change ball color to vibrant gold",
-  "edits": [
-    {
-      "start_line": 105,
-      "end_line": 105,
-      "new_text": "  color: \\"#fbbf24\\",\\n",
-      "description": "Gold ball color"
-    }
-  ]
-}
-```"""
-    diff_event = worker._parse_diff_output(raw_llm_response, DEFAULT_BREAKOUT_CODE)
-    assert len(diff_event.edits) == 1
-    assert diff_event.edits[0].start_line == 105
+    from backend.worker import compute_diff_chunks
 
-    edited_code = apply_code_edits(DEFAULT_BREAKOUT_CODE, diff_event.edits)
+    gold_code = DEFAULT_BREAKOUT_CODE.replace('color: "#f43f5e"', 'color: "#fbbf24"')
+
+    diff_chunks = compute_diff_chunks(DEFAULT_BREAKOUT_CODE, gold_code)
+    assert len(diff_chunks) == 1
+    assert diff_chunks[0].start_line == 105
+    assert diff_chunks[0].end_line == 105
+    assert 'color: "#fbbf24"' in diff_chunks[0].new_text
+
+    edited_code = apply_code_edits(DEFAULT_BREAKOUT_CODE, diff_chunks)
+    assert edited_code == gold_code
     assert 'color: "#fbbf24"' in edited_code
     assert 'color: "#f43f5e"' not in edited_code

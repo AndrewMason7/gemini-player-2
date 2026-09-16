@@ -7,30 +7,13 @@ interface GamePreviewProps {
 	reaction?: { mood: string; effect: string } | null;
 }
 
-export const GamePreview: React.FC<GamePreviewProps> = ({ code, reaction }) => {
-	const iframeRef = useRef<HTMLIFrameElement | null>(null);
-	const [key, setKey] = useState<number>(0);
-	const [error, setError] = useState<string | null>(null);
-	const lastStateRef = useRef<any>(null);
+export function buildGameIframeHtml(code: string, savedState?: unknown): string {
+	const sanitizedCode = code.replace(/<\/script/gi, "<\\/script");
+	const stateInjection = savedState
+		? `window.__SAVED_GAME_STATE__ = ${JSON.stringify(savedState)};`
+		: "";
 
-	const restartGame = () => {
-		lastStateRef.current = null;
-		setKey((prev) => prev + 1);
-		setError(null);
-	};
-
-	useEffect(() => {
-		const iframe = iframeRef.current;
-		if (!iframe) return;
-		setError(null);
-		void key; // Explicit trigger for game restart
-
-		const sanitizedCode = code.replace(/<\/script/gi, "<\\/script");
-		const stateInjection = lastStateRef.current
-			? `window.__SAVED_GAME_STATE__ = ${JSON.stringify(lastStateRef.current)};`
-			: "";
-
-		const htmlContent = `
+	return `
       <!DOCTYPE html>
       <html>
         <head>
@@ -75,8 +58,27 @@ export const GamePreview: React.FC<GamePreviewProps> = ({ code, reaction }) => {
         </body>
       </html>
     `;
+}
 
-		iframe.srcdoc = htmlContent;
+export const GamePreview: React.FC<GamePreviewProps> = ({ code, reaction }) => {
+	const iframeRef = useRef<HTMLIFrameElement | null>(null);
+	const [key, setKey] = useState<number>(0);
+	const [error, setError] = useState<string | null>(null);
+	const lastStateRef = useRef<any>(null);
+
+	const restartGame = () => {
+		lastStateRef.current = null;
+		setKey((prev) => prev + 1);
+		setError(null);
+	};
+
+	useEffect(() => {
+		const iframe = iframeRef.current;
+		if (!iframe) return;
+		setError(null);
+		void key; // Explicit trigger for game restart
+
+		iframe.srcdoc = buildGameIframeHtml(code, lastStateRef.current);
 	}, [code, key]);
 
 	useEffect(() => {

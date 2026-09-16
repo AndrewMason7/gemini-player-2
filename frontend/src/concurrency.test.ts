@@ -100,4 +100,56 @@ describe("Overlapping Voice Command + User Edit Concurrency", () => {
 
         expect(currentCode).toBe("let a = 5;\nlet b = 99;\n");
     });
+
+    it("handles index race: user inserts lines above target line, server rebases diff", () => {
+        // Base code that the AI worker received snapshot of:
+        const baseCode = (
+            "let score = 0;\n" +      // Line 1
+            "let lives = 3;\n" +      // Line 2
+            "// ball setup\n" +       // Line 3
+            "let ball = {\n" +        // Line 4
+            '  color: "#f43f5e",\n' + // Line 5 (Target line in base)
+            "  speed: 5\n" +          // Line 6
+            "};\n"                    // Line 7
+        );
+
+        // While AI worker runs, user concurrently inserts 3 lines at line 1
+        let editorCode = (
+            "// Top header comment\n" +   // Line 1 (user inserted)
+            "// Difficulty settings\n" +  // Line 2 (user inserted)
+            "const MAX_LIVES = 5;\n" +    // Line 3 (user inserted)
+            "let score = 0;\n" +          // Line 4
+            "let lives = 3;\n" +          // Line 5
+            "// ball setup\n" +           // Line 6
+            "let ball = {\n" +            // Line 7
+            '  color: "#f43f5e",\n' +     // Line 8 (Target line shifted down by 3 lines!)
+            "  speed: 5\n" +              // Line 9
+            "};\n"                        // Line 10
+        );
+
+        // If backend sent raw un-rebased line 5 diff, applying it to editorCode would overwrite line 5 ("let lives = 3;")!
+        // Instead, the backend 3-way merges and rebases the diff against the user's latest buffer:
+        const rebasedDiffFromServer: DiffChunk[] = [
+            {
+                start_line: 8, // Correctly rebased from 5 -> 8
+                end_line: 8,
+                new_text: '  color: "#fbbf24",\n',
+                description: "Turn ball gold (rebased with concurrent edits)",
+            },
+        ];
+
+        // Apply rebased diff to editor buffer
+        editorCode = applyEditsToBuffer(editorCode, rebasedDiffFromServer);
+
+        // Assert all user-inserted lines are preserved at the top
+        expect(editorCode).toContain("// Top header comment\n");
+        expect(editorCode).toContain("// Difficulty settings\n");
+        expect(editorCode).toContain("const MAX_LIVES = 5;\n");
+        // Assert lines in between remain intact
+        expect(editorCode).toContain("let lives = 3;");
+        // Assert ball color was changed on line 8 without corrupting lines 1-7 or 9-10
+        expect(editorCode).toContain('color: "#fbbf24"');
+        expect(editorCode).not.toContain('color: "#f43f5e"');
+        expect(editorCode).toContain("speed: 5");
+    });
 });

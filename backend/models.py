@@ -36,6 +36,7 @@ class CodeDiffEvent(BaseModel):
     type: Literal["code_diff"] = "code_diff"
     edits: list[DiffChunk]
     description: str
+    modified_code: str | None = None
 
 
 class EmotionEvent(BaseModel):

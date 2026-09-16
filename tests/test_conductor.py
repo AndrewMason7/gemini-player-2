@@ -116,9 +116,7 @@ async def test_conductor_send_methods():
 
     # 5. notify_task_failed
     mock_session.reset_mock()
-    await conductor.notify_task_failed(
-        "Double ball speed", "Syntax error in edit"
-    )
+    await conductor.notify_task_failed("Double ball speed", "Syntax error in edit")
     mock_session.send_realtime_input.assert_called_once()
     failed_text = mock_session.send_realtime_input.call_args[1]["text"]
     assert "FAILED to apply code changes" in failed_text

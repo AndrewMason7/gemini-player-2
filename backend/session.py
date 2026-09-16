@@ -133,20 +133,44 @@ class LiveSessionManager:
                     ).model_dump()
                 )
                 try:
+                    snapshot_code = self.current_code
                     diff_result = await self.worker.execute_task(
                         instruction=instruction,
-                        current_code=self.current_code,
+                        current_code=snapshot_code,
                         on_thought=stream_thought,
                     )
                     if diff_result.edits:
-                        # Apply edits to backend code mirror immediately
-                        self.current_code = apply_code_edits(
-                            self.current_code, diff_result.edits
-                        )
+                        if (
+                            diff_result.modified_code
+                            and self.current_code != snapshot_code
+                        ):
+                            # Rebase AI modifications against latest self.current_code using 3-way merge
+                            from backend.worker import (
+                                compute_diff_chunks,
+                                three_way_merge,
+                            )
+
+                            merged_code = three_way_merge(
+                                base_text=snapshot_code,
+                                ai_text=diff_result.modified_code,
+                                user_text=self.current_code,
+                            )
+                            rebased_edits = compute_diff_chunks(
+                                self.current_code, merged_code
+                            )
+                            diff_result.edits = rebased_edits
+                            self.current_code = merged_code
+                        else:
+                            # Apply edits to backend code mirror immediately
+                            self.current_code = apply_code_edits(
+                                self.current_code, diff_result.edits
+                            )
                         if self.conductor:
                             self.conductor.update_code(self.current_code)
                         # Fly Player 2 cursor to the edited line with typing gesture
-                        first_line = diff_result.edits[0].start_line
+                        first_line = (
+                            diff_result.edits[0].start_line if diff_result.edits else 1
+                        )
                         await self.on_cursor_move(first_line, 1, "typing")
 
                         # Push diff event to client

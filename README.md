@@ -10,9 +10,10 @@
 **Gemini: Player 2** is an architectural **Proof of Concept (PoC)** demonstrating how to bridge the **Gemini Multimodal Live API** (`google-genai`) and the **Google Antigravity SDK** (`google-antigravity`) into a seamless, full-duplex voice co-presence and autonomous coding system:
 
 * 🎙️ **The Voice Conductor (`gemini-3.8-live`)**: Talks, listens, and laughs with you in real-time over native WebSockets using 16kHz input / 24kHz output PCM audio with instant barge-in interruption.
-* ⚡ **The Coding Worker (`gemini-3.8-flash`)**: Formulates surgical line-based code diffs in the background and streams live reasoning tokens to the UI without interrupting the voice conversation.
-* 🕹️ **Live Arcade Sandbox**: An interactive 2D HTML5 canvas physics game (Breakout sandbox) that hot-reloads edits on the fly while preserving gameplay state.
+* ⚡ **The Coding Worker (`gemini-3.7-flash`)**: Autonomous Google Antigravity agent modifying `breakout.js` in an isolated workspace using `view_file`/`edit_file`, streaming live reasoning tokens to the UI without interrupting the voice conversation.
+* 🕹️ **Live Arcade Sandbox**: An interactive 2D HTML5 canvas physics game (Breakout sandbox) that hot-reloads edits on the fly while preserving gameplay state (score, lives, level, combo, ball velocity, bricks).
 * 👥 **Monaco Multi-Cursor Co-Presence**: Player 2 has its own animated neon cursor and name badge in the Monaco Editor, flying to lines of code as it inspects and edits them.
+* 🎉 **Real Canvas Reactions**: Player 2 triggers real particle explosions and celebration effects directly on the arcade canvas via `react_emotion`.
 * 🧠 **Visual Thought Aura**: An ambient glowing interface displaying Gemini's stream-of-consciousness thoughts before code changes are applied.
 
 ---
@@ -36,7 +37,7 @@ flowchart TD
 
     subgraph CodingEngine ["Background Coding Worker"]
         Worker["AntigravityWorker (backend/worker.py)"]
-        FlashModel["Gemini Flash (gemini-3.8-flash)"]
+        FlashModel["Gemini Flash (gemini-3.7-flash)"]
     end
 
     Client -->|"Audio and Events (/ws/live)"| Session
@@ -47,12 +48,12 @@ flowchart TD
     GeminiLive -->|"Audio and Tool Calls"| Conductor
 
     Session -->|"Serializes Tasks"| WorkerLock
-    WorkerLock -->|"Runs with Numbered Code"| Worker
-    Worker -->|"Prompt and Context"| FlashModel
-    FlashModel -->|"Thoughts and JSON Diffs"| Worker
-    Worker -->|"Surgical DiffChunks"| Session
+    WorkerLock -->|"Workspace File breakout.js"| Worker
+    Worker -->|"Prompt and Tools (view/edit)"| FlashModel
+    FlashModel -->|"Thoughts and Workspace File Edits"| Worker
+    Worker -->|"Deterministic DiffChunks"| Session
     Session -->|"Update Mirror"| CodeMirror
-    Session -->|"Notify Task Complete"| Conductor
+    Session -->|"Notify Task Complete / Failed"| Conductor
 ```
 
 For an in-depth breakdown of concurrency locks, reverse-order diff patching, and session resumption, check out [**`BACKEND.md`**](BACKEND.md).
@@ -84,8 +85,8 @@ This project is a functional **Proof of Concept (PoC)** demonstrating how to sol
 │                 BACK-OF-HOUSE (Coding Worker)               │
 │                   Google Antigravity SDK                    │
 │  • Streams reasoning tokens (response.thoughts -> Aura)     │
-│  • 1-indexed ground-truth numbered code analysis            │
-│  • Generates surgical line replacement diffs (DiffChunk)    │
+│  • Native workspace file operations (view_file / edit_file) │
+│  • Deterministic difflib chunk generation (DiffChunk)       │
 │  • Monaco executes edits without resetting user caret/undo  │
 └──────────────────────────────┬──────────────────────────────┘
                                │ 2. Closed-Loop Telemetry (send_realtime_input)
@@ -93,7 +94,7 @@ This project is a functional **Proof of Concept (PoC)** demonstrating how to sol
 ┌─────────────────────────────────────────────────────────────┐
 │                 CLOSED-LOOP VOICE CONTINUITY                │
 │  The Conductor's internal code mirror updates in real time. │
-│  Gemini speaks naturally about the new game mechanics!      │
+│  Gemini speaks honestly about what changed (or failed)!    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -103,12 +104,14 @@ This project is a functional **Proof of Concept (PoC)** demonstrating how to sol
    - When a modification is requested, it delegates execution to the background engine via `dispatch_code_task` without dropping the voice stream.
 
 2. **Back-of-House (Google Antigravity SDK Engine)**:
-   - Powered by `google.antigravity` / `gemini-3.8-flash`.
+   - Powered by `google.antigravity` (default model: `gemini-3.7-flash`).
+   - Modifies `breakout.js` in an isolated agent workspace using `BuiltinTools.VIEW_FILE` and `BuiltinTools.EDIT_FILE`.
    - Streams raw reasoning tokens (`response.thoughts`) over WebSockets to illuminate the browser's **Thought Aura**.
-   - Calculates surgical 1-indexed line diffs against the active game canvas, applying edits safely without blocking audio.
+   - Calculates surgical 1-indexed line diffs (`DiffChunk`) against the original file, applying edits safely to Monaco without blocking audio.
 
-3. **The Closed-Loop Feedback Bridge**:
+3. **The Closed-Loop Feedback & Honest Error Bridge**:
    - The moment the Antigravity worker finishes applying code changes, the backend whispers an environmental update directly into the Live session stream using `session.send_realtime_input`.
+   - If an edit fails or makes no changes, the backend honestly whispers the failure to the Live model so it candidly informs the user rather than hallucinating success.
    - The Live Agent's internal code mirror updates instantly, allowing it to naturally discuss, inspect, and celebrate what it just built with you.
 
 ---
@@ -130,9 +133,19 @@ cd gemini-player-2
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials:
+Edit `.env` with your configuration:
 ```ini
+# Section 1: Gemini Live API (Voice & Streaming)
 GEMINI_API_KEY=your_google_ai_studio_api_key_here
+GEMINI_LIVE_MODEL=gemini-3.8-live
+GEMINI_VOICE_NAME=Puck
+
+# Section 2: Google Antigravity SDK (Coding Worker)
+# Option A (Simple): Leave unset — automatically uses GEMINI_API_KEY from Section 1!
+# Option B (Google Cloud Vertex AI ADC): Uncomment and configure:
+# GOOGLE_GENAI_USE_VERTEXAI=true
+# GOOGLE_CLOUD_PROJECT=your_gcp_project_id_here
+# GOOGLE_CLOUD_LOCATION=global
 ```
 
 ### 2. Install Dependencies
@@ -197,7 +210,7 @@ Once connected and your microphone is unmuted:
 ### AI Models & Audio Protocols
 * **Models**:
   * `gemini-3.8-live` — Real-time conversational voice, natural turn-taking, multi-turn memory, and tool dispatching.
-  * `gemini-3.8-flash` — Deep background code reasoning, thought streaming, and surgical line diff calculations.
+  * `gemini-3.7-flash` — Default Antigravity SDK model for deep background code reasoning, thought streaming, and surgical line diff calculations (customizable via `ANTIGRAVITY_MODEL`).
 * **Audio Protocols**:
   * **Input**: 16kHz 16-bit linear PCM microphone recorder with zero-gain mute node loopback elimination.
   * **Output**: 24kHz monotonic scheduled Web Audio player with $<5\text{ms}$ barge-in interruption cutoff.
@@ -208,13 +221,13 @@ Once connected and your microphone is unmuted:
 
 Run the full automated test suites:
 
-**Backend Tests (Pytest — 34 passing):**
+**Backend Tests (Pytest — 46 passing):**
 ```bash
 uv run pytest
 uv run ruff check .
 ```
 
-**Frontend Tests (Bun / Vitest — 13 passing):**
+**Frontend Tests (Bun — 28 passing):**
 ```bash
 cd frontend
 bun test

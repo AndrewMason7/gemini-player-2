@@ -1,15 +1,12 @@
 import asyncio
 import difflib
-import json
 import logging
 import os
-import re
 import tempfile
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
 from backend.models import CodeDiffEvent, DiffChunk
 
@@ -81,38 +78,60 @@ def compute_diff_chunks(old_code: str, new_code: str) -> list[DiffChunk]:
     return chunks
 
 
-class EditSpec(BaseModel):
-    start_line: int = Field(description="1-indexed starting line to replace")
-    end_line: int = Field(description="1-indexed ending line to replace (inclusive)")
-    new_text: str = Field(description="Exact new code replacement")
-    description: str = Field(description="Explanation of the edit")
+def three_way_merge(base_text: str, ai_text: str, user_text: str) -> str:
+    """Performs a deterministic 3-way line merge between base snapshot, AI edits, and concurrent user edits.
 
+    base_text: Code snapshot when worker task started.
+    ai_text: Code modified by Antigravity worker.
+    user_text: Latest active editor code including any concurrent user edits.
+    """
+    if user_text == base_text:
+        return ai_text
+    if ai_text == base_text:
+        return user_text
+    if ai_text == user_text:
+        return user_text
 
-class CodeWorkerResult(BaseModel):
-    summary: str = Field(description="One-sentence description of what was changed")
-    edits: list[EditSpec] = Field(description="List of surgical line edits")
+    base_lines = base_text.splitlines(keepends=True)
+    ai_lines = ai_text.splitlines(keepends=True)
+    user_lines = user_text.splitlines(keepends=True)
 
+    ai_matcher = difflib.SequenceMatcher(None, base_lines, ai_lines)
+    user_matcher = difflib.SequenceMatcher(None, base_lines, user_lines)
 
-WORKER_SYSTEM_PROMPT = """You are Gemini: Player 2, an elite real-time AI pair programmer and game designer.
-When given the current code and an instruction:
-1. Think deeply about the requested change (physics, gameplay, visual aesthetics, bug fixes).
-2. Produce SURGICAL edits using 1-indexed line numbers. Only replace the lines that need changing.
-3. The code provided is formatted with 1-indexed line numbers (e.g. "15:   speed: 5,"). Use these exact line numbers for start_line and end_line.
-4. In "new_text", output ONLY the raw replacement code without any line number prefixes.
-5. Keep changes tight, modular, and cleanly formatted for standard JavaScript/HTML canvas.
-6. Output valid JSON conforming to:
-{
-  "summary": "Brief description of changes",
-  "edits": [
-    {
-      "start_line": 15,
-      "end_line": 18,
-      "new_text": "  speed: 10,\\n",
-      "description": "Increase speed"
-    }
-  ]
-}
-"""
+    ai_ops = [op for op in ai_matcher.get_opcodes() if op[0] != "equal"]
+    user_ops = [op for op in user_matcher.get_opcodes() if op[0] != "equal"]
+
+    # Collect change chunks: (base_start, base_end, 'user' | 'ai', replacement_lines)
+    changes: list[tuple[int, int, str, list[str]]] = []
+    for _tag, i1, i2, j1, j2 in user_ops:
+        changes.append((i1, i2, "user", user_lines[j1:j2]))
+    for _tag, i1, i2, j1, j2 in ai_ops:
+        changes.append((i1, i2, "ai", ai_lines[j1:j2]))
+
+    # Sort changes by base_start; user insertions at same line come first
+    changes.sort(key=lambda c: (c[0], 0 if c[2] == "user" else 1, c[1]))
+
+    merged_lines: list[str] = []
+    curr_base = 0
+
+    for i1, i2, _source, rep in changes:
+        if i1 > curr_base:
+            merged_lines.extend(base_lines[curr_base:i1])
+            curr_base = i1
+        if i1 >= curr_base:
+            merged_lines.extend(rep)
+            curr_base = max(curr_base, i2)
+        else:
+            # Overlap handling
+            if i2 > curr_base:
+                merged_lines.extend(base_lines[curr_base:i2])
+                curr_base = i2
+
+    if curr_base < len(base_lines):
+        merged_lines.extend(base_lines[curr_base:])
+
+    return "".join(merged_lines)
 
 
 def _write_file_sync(path: str, content: str) -> None:
@@ -135,15 +154,11 @@ class AntigravityWorker:
         location: str | None = None,
     ):
         self.api_key = (
-            api_key
-            or os.getenv("ANTIGRAVITY_API_KEY")
-            or os.getenv("GEMINI_API_KEY")
+            api_key or os.getenv("ANTIGRAVITY_API_KEY") or os.getenv("GEMINI_API_KEY")
         )
         # If model is not explicitly provided or in env, leave as None to use SDK default (gemini-3.7-flash)
         self.model = (
-            model
-            or os.getenv("ANTIGRAVITY_MODEL")
-            or os.getenv("GEMINI_FLASH_MODEL")
+            model or os.getenv("ANTIGRAVITY_MODEL") or os.getenv("GEMINI_FLASH_MODEL")
         )
 
         # Configure Vertex AI / Enterprise mode if specified or detected from environment
@@ -158,9 +173,7 @@ class AntigravityWorker:
             vertex if vertex is not None else (use_vertex_env and has_vertex_project)
         )
         self.project = (
-            project
-            or os.getenv("GOOGLE_CLOUD_PROJECT")
-            or os.getenv("VERTEX_PROJECT")
+            project or os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("VERTEX_PROJECT")
         )
         self.location = location or os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 
@@ -254,7 +267,11 @@ class AntigravityWorker:
                     logger.info(
                         f"Antigravity worker produced {len(edits)} diff chunk(s) for '{instruction}'"
                     )
-                    return CodeDiffEvent(description=summary, edits=edits)
+                    return CodeDiffEvent(
+                        description=summary,
+                        edits=edits,
+                        modified_code=modified_code,
+                    )
 
         except Exception as err:
             logger.exception("Error in AntigravityWorker native execution")
@@ -266,52 +283,3 @@ class AntigravityWorker:
         return CodeDiffEvent(
             description=f"Failed to execute task: {instruction}", edits=[]
         )
-
-    def _parse_diff_output(self, raw_text: str, current_code: str) -> CodeDiffEvent:
-        """Robustly parses JSON from LLM response or code block."""
-        cleaned = raw_text.strip()
-        if "```json" in cleaned:
-            cleaned = cleaned.split("```json")[1].split("```")[0].strip()
-        elif "```" in cleaned:
-            cleaned = cleaned.split("```")[1].split("```")[0].strip()
-
-        try:
-            data = json.loads(cleaned, strict=False)
-            edits = []
-            for item in data.get("edits", []):
-                start_l = max(1, int(item.get("start_line", 1)))
-                end_l = max(start_l, int(item.get("end_line", start_l)))
-                raw_new_text = str(item.get("new_text", ""))
-
-                # Strip accidental echoed line numbers (e.g. "183:   initBricks();")
-                cleaned_lines = []
-                for line in raw_new_text.splitlines(keepends=True):
-                    m = re.match(r"^\s*(\d+):\s?(.*)", line)
-                    if m and not line.strip().startswith(("case ", "http:", "https:")):
-                        line_num = int(m.group(1))
-                        if abs(line_num - start_l) <= 5 or abs(line_num - end_l) <= 5:
-                            cleaned_lines.append(
-                                m.group(2) + ("\n" if line.endswith("\n") else "")
-                            )
-                            continue
-                    cleaned_lines.append(line)
-                clean_new_text = "".join(cleaned_lines)
-
-                edits.append(
-                    DiffChunk(
-                        start_line=start_l,
-                        end_line=end_l,
-                        new_text=clean_new_text,
-                        description=str(item.get("description", "")),
-                    )
-                )
-            return CodeDiffEvent(
-                description=data.get("summary", "Applied code edits"), edits=edits
-            )
-        except Exception as err:  # noqa: BLE001
-            logger.warning(
-                f"Failed to parse structured diff JSON: {err}. Raw was: {cleaned}"
-            )
-            return CodeDiffEvent(
-                description=f"Unable to parse surgical diff: {err}", edits=[]
-            )
