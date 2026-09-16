@@ -221,13 +221,17 @@ Once connected and your microphone is unmuted:
 
 Run the full automated test suites:
 
-**Backend Tests (Pytest — 46 passing):**
+**Backend Tests (Pytest — 48 total: 46 unit passed, 2 gated live):**
 ```bash
+# Run unit & concurrency test suite
 uv run pytest
 uv run ruff check .
+
+# Opt-in: Run live Google Antigravity Agent & Gemini Live websocket integration tests
+RUN_LIVE_AGENTS=1 GEMINI_API_KEY=your-api-key uv run pytest tests/test_live_integration.py
 ```
 
-**Frontend Tests (Bun — 28 passing):**
+**Frontend Tests (Bun — 29 passing):**
 ```bash
 cd frontend
 bun test

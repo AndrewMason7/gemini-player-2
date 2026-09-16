@@ -285,13 +285,19 @@ All text frames across `/ws/live` are JSON payloads conforming to contracts in [
 
 The backend includes comprehensive test coverage:
 
+- **Live Integration Tests** ([`tests/test_live_integration.py`](tests/test_live_integration.py)): Opt-in end-to-end tests against real Google Antigravity SDK (`gemini-3.7-flash`) with isolated `breakout.js` workspace and real Gemini Live API (`gemini-3.8-live`) WebSockets (gated via `RUN_LIVE_AGENTS=1` and `GEMINI_API_KEY`).
+- **Concurrency & Index Race Tests** ([`tests/test_concurrency_race.py`](tests/test_concurrency_race.py)): Verifies 3-way merge rebasing and line index shifting when user types or inserts lines above target line during worker execution.
 - **Conductor Unit Tests** ([`tests/test_conductor.py`](tests/test_conductor.py)): Mocked Live API sessions, tool generation, multi-turn loop persistence, audio streaming, session resumption.
-- **Gateway & Integration Tests** ([`tests/test_gateway.py`](tests/test_gateway.py)): REST routes, WebSocket handshakes, heartbeat ping/pong, and **worker concurrency serialization verification**.
-- **Diff & Parsing Tests** ([`tests/test_worker_diff.py`](tests/test_worker_diff.py)): Deterministic difflib chunking, multi-line modifications, whitespace indentation, and trailing newline preservation.
+- **Gateway & Integration Tests** ([`tests/test_gateway.py`](tests/test_gateway.py)): REST routes, WebSocket handshakes, heartbeat ping/pong, and worker concurrency serialization verification.
+- **Diff & Merge Tests** ([`tests/test_worker_diff.py`](tests/test_worker_diff.py)): 3-way merge conflict resolution, deterministic difflib chunking, multi-line modifications, whitespace indentation, and trailing newline preservation.
+- **Game Transformation Tests** ([`tests/test_game_edits.py`](tests/test_game_edits.py)): Full AST diff calculation and headless JS execution verifying Breakout game physics.
 - **Model Contract Tests** ([`tests/test_models.py`](tests/test_models.py)): Serialization and validation of all Pydantic event contracts.
 
 Run the test suite:
 ```bash
 uv run pytest
 uv run ruff check .
+
+# Opt-in live model testing:
+RUN_LIVE_AGENTS=1 GEMINI_API_KEY=your-api-key uv run pytest tests/test_live_integration.py
 ```
